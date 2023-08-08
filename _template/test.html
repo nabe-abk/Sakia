@@ -1,0 +1,65 @@
+
+<p>This is "<@v.skeleton>.html" for test form.</p>
+
+<form id="form">
+<input type="hidden" name="action" value="_ajax_test">
+
+ax^2 + bx + c = 0<br>
+a=<input name="a" type="text" value=""><br>
+b=<input name="b" type="text" value=""><br>
+c=<input name="c" type="text" value=""><br>
+<button type="button" id="btn">Calc</button><br>
+</form>
+
+Result <input id="result" type="text" style="width: 90%"><br>
+Response<br>
+<textarea id="textarea" rows="6" style="width: 90%"></textarea>
+
+
+<script>
+document.getElementById('btn').addEventListener('click', function(evt){
+	const list = document.querySelectorAll('#form input');
+	for(const d of list) d.className='';	// remove 'error' class
+
+	const data = new FormData( document.getElementById('form') );
+
+	const result   = document.getElementById('result');
+	const textarea = document.getElementById('textarea');
+	result  .value = '';
+	textarea.value = '';
+
+	fetch('<@myself>', {
+		method: 'POST',
+		body: data
+	}).then((res) => {
+		if (!res.ok) throw 'Failed ajax request';
+
+		console.log(res);
+		return res.text();
+
+	}).then((text) => {
+		textarea.value = text;
+		const data = JSON.parse(text);
+
+		if (data.ret && data.errs) {
+			const ary = [];
+			const e = data.errs;
+			const o = e._order || Object.keys(e);
+			for(const n of o) {
+				const inp = document.querySelector('#form input[name=' + n + ']');
+				if (inp) inp.className = 'error';
+
+				if (e[n]=='') continue;
+				ary.push(e[n]);
+			}
+			data.msg = ary.join(' ');
+		}
+		if (data.ret != 0) throw data.msg;
+
+		result.value = data.result;
+
+	}).catch((err) => result.value = '(error) ' + err);
+});
+</script>
+
+<p>Back to <a href="<@myself>">main skeleton</a>.</p>

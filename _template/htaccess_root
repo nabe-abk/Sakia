@@ -1,0 +1,10 @@
+Options +FollowSymLinks
+
+RewriteEngine	On
+RewriteCond	%{REQUEST_FILENAME}	!-f
+RewriteRule	^(.*)$			<@NAME>.cgi/$1				[L]
+#RewriteRule	^(.*)$			<@NAME>.fcgi/$1				[L]
+
+# SetENV SakiaTimer 		1
+# SetENV SakiaReloadStop	1
+# SetENV SakiaCacheDir		__cache/

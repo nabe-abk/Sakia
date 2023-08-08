@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=<@SystemCode>">
+<@>-----------------------------------------------------------------------------
+<link rel="stylesheet" href="<@Basepath><@v.theme_dir>theme.css?<@get_lastmodified(v.theme_dir . 'theme.css')>">
+<@>---JavaScript----------------------------------------------------------------
+<@><script defer src="<@Basepath><@v.script_dir>asys.min.js?<@get_lastmodified(v.script_dir . 'asys.min.js')>"></script>
+<@>---Title---------------------------------------------------------------------
+	<title><@v.title></title>
+</head>
+<body id="body">
+
+<@>-----------------------------------------------------------------------------
+<@> header
+<@>-----------------------------------------------------------------------------
+<header id="header">
+<h1><a href="<@myself>"><@NAME> application</a></h1>
+</header>
+
+<@>-----------------------------------------------------------------------------
+<@> main
+<@>-----------------------------------------------------------------------------
+<!--main body================================================================-->
+<div id="main">
+<@argv#0>
+</div>
+
+<!--footer===================================================================-->
+<footer id="footer">
+<div><@NAME> Version <@v.VERSION></div>
+</footer>
+
+
+<@ifexec(Develop && (@Error || @Debug), begin.debug)>
+<!--debug====================================================================-->
+<div class="main" id="debug-messages">
+<h2>debug</h2>
+
+<@ifexec(@Error, begin)>
+<div class="output-error">Error : <strong><@clear_error("<br>\n")></strong></div>
+<$end>
+<@ifexec(@Debug, begin)>
+<div class="output-debug">Debug : <strong><@clear_debug("<br>\n")></strong></div>
+<$end>
+</div>
+<$end.debug>
+
+
+</body>
+</html>

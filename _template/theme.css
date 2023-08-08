@@ -1,0 +1,40 @@
+@charset "UTF-8";
+
+h1
+{
+	font-size:		20pt;
+	font-weight:		normal;
+	line-height:		100%;
+	border-bottom:		2px solid #6b75b8;
+	padding:		0 0.5em;
+	margin:			0.6em 0 0 0;
+}
+h1 a,
+h1 a:link,
+h1 a:visited {
+	color:			inherit;
+	text-decoration:	none;
+}
+
+#main {
+	margin:			1em;
+}
+
+#footer
+{
+	border-top:		2px solid #6b75b8;
+	text-align:		right;
+	margin:			1.5em 0 0.6em 0;
+	padding:		0 1em;
+	font-size:		10pt;
+	line-height:		120%;
+}
+
+p {
+	text-indent:		1em;
+}
+
+.error {
+	background-color:	#fee;
+}
+
