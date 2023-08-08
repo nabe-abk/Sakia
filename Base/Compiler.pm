@@ -85,7 +85,7 @@ SUB_HEAD
 my $SUB_FUNC_ADD = '	$R->{IsFunction}=1;' . "\n";
 my $DefaultIndentTAB = 1;
 
-my %ReservedVars = map { $_ => 1 } qw(R O L v);
+my %ReservedVars = map { $_ => 1 } qw(R O L v argv myself myself2);
 
 #-------------------------------------------------------------------------------
 # Forced to be considered a function, not a variable
@@ -430,31 +430,26 @@ sub preprocessor {
 		#---------------------------------------------------------------
 		# Pragma
 		#---------------------------------------------------------------
-		if ($data =~ /^<\@(\d[0-9A-Fa-f]*)(?:\.\w+)?>/) {	# ex) <@06>
-			my $n = oct("0x$1");
-			foreach(keys(%PRAGMA)) {
-				$P->{$_} = $n & $PRAGMA{$_};
-			}
-			next;
-		}
-		if ($data =~ /^<\$'\+?([^\\\']+)'>$/) {	# ex) <$'strict'>
-			my @ary = split(/\s*,\s*/, $1);
-			my @err;
-			foreach(@ary) {
-				my $f = substr($_,0,1) eq '-' ? 0 : 1;
-				if (!$f) { $_ = substr($_,1); }
-
-				if (! $PRAGMA{$_}) {
-					push(@err, $_);
+		my $is_pragma;
+		while ($data =~ /^<(?:\@(\d[0-9A-Fa-f]*)(?:\.\w+)?|\$'([\+\-])?(\w+)')>\s*(.*)/) {
+			$is_pragma = 1;
+			$data = $5;
+			if ($1 ne '') {		# ex) <@06> <@20>
+				my $n = hex($1);
+				foreach(keys(%PRAGMA)) {
+					$P->{$_} = $n & $PRAGMA{$_};
 				}
-				$P->{$_} = $f;
+
+			} else {		# ex <$strict> <$+rm_sp_begin> <$-rm_blank>
+				if ($PRAGMA{$3}) {
+					$P->{$3} = $2 eq '-' ? 0 : 1;
+				} else {
+					my $h = { lnum => $lnum };
+					$self->error_from($h, 'Unknown pragma: %s', $3);
+				}
 			}
-			if (@err) {
-				my $h = { lnum => $lnum };
-				$self->error_from($h, 'Unknown pragma: %s', join(' ', @err));
-			}
-			next;
 		}
+		if ($is_pragma) { next; }
 
 		if ($P->{rm_blank}    && $data =~ /^\r?\n$/                  ) { next; }
 		if ($P->{rm_blank_fc} && $data =~ /^\r?\n$/ && $prev_cmd_only) { next; }
@@ -1151,7 +1146,8 @@ sub poland_to_expression {
 		if (!@err && $strict) {
 			if ($type eq 'obj') { $self->get_object($st, $exp); }
 			foreach(keys(%$ref_obj)) {
-				if ($_ !~ /^[a-z_]/) { next; }
+				if ($_ !~ /^[a-z_]/)   { next; }
+				if ($ReservedVars{$_}) { next; }
 				@err = ('Strict mode not access to lowercase global variable: %s', $ref_obj->{$_});	## msg
 			}
 		}
