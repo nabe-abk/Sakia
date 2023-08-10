@@ -94,7 +94,7 @@ sub find_table {
 	# テーブルからの情報取得
 	my $dbh = $self->{dbh};
 	my $sql = "SHOW TABLES LIKE ?";
-	my $sth = $dbh->prepare_cached($sql);
+	my $sth = $dbh->prepare($sql);
 	$self->debug($sql);	## safe
 	$sth && $sth->execute($table);
 
@@ -153,7 +153,7 @@ sub select {
 	#-----------------------------------------
 	# Do SQL
 	#-----------------------------------------
-	my $sth = $dbh->prepare_cached($sql);
+	my $sth = $dbh->prepare($sql);
 	$self->debug($sql, $ary);	## safe
 	$sth && $sth->execute(@$ary);
 	if (!$sth || $dbh->err) {
@@ -171,7 +171,7 @@ sub select {
 	my $hits = $#$ret+1;
 	if ($limit ne '' && $limit <= $hits) {
 		$sql = 'SELECT FOUND_ROWS()';
-		$sth = $dbh->prepare_cached($sql);
+		$sth = $dbh->prepare($sql);
 		$self->debug($sql);	## safe
 		$sth && $sth->execute();
 		if (!$sth || $dbh->err) {
