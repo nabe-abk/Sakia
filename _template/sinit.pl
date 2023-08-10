@@ -4,15 +4,15 @@ use strict;
 # Sakia initalizer
 #						Copyright (C)2023 nabe@abk
 #-------------------------------------------------------------------------------
-my $LastUpdate = '2023.08.08';
+my $LastUpdate = '2023.08.09';
 ################################################################################
 # Default setting
 ################################################################################
 my $BASE = './';
 my $NAME;
+my $FORCE;
 
 my $GIT_SAKIA = 'git@github.com:nabe-abk/Sakia.git';
-my $GIT_ASYS  = 'https://github.com/nabe-abk/asys.js';
 #-------------------------------------------------------------------------------
 # parse options
 #-------------------------------------------------------------------------------
@@ -23,6 +23,7 @@ my $GIT_ASYS  = 'https://github.com/nabe-abk/asys.js';
 	while(@ARGV) {
 		my $x = shift(@ARGV);
 		if ($x eq '-b') { $BASE =shift(@ARGV); next; }
+		if ($x eq '-f') { $FORCE=1; next; }
 		if ($x eq '-h') { $HELP =1; next; }
 		push(@ary, $x);
 	}
@@ -34,6 +35,7 @@ Usage: $0 [options] <project-name>
 
 Available options are:
   -b		Base directory (default: ./)
+  -f		Force overwrite
   -h		View this help
 HELP
 		exit;
@@ -82,7 +84,7 @@ my $ROBJ = new Sakia::Base;
 #--------------------------------------------------------------------------------
 # copy startup scripts
 #--------------------------------------------------------------------------------
-print "startup script copy:";
+print "copy startup script:";
 foreach(qw(.cgi .fcgi .httpd.pl)) {
 	my $src = "$TPLDIR/startup$_";
 	my $des = "$TARDIR/$NAME$_";
@@ -105,12 +107,13 @@ print "\n";
 
 &make_dir ('skel');
 &copy_file('htaccess_deny', 'skel/.htaccess');
-&copy_file('_frame.html',   'skel/_frame.html');
-&copy_file('_main.html',    'skel/_main.html');
-&copy_file('test.html',     'skel/test.html');
+my $files = $ROBJ->search_files("$TPLDIR/", { ext => '.html' });
+foreach(@$files) {
+	&copy_file($_, "skel/$_");
+}
 
 &make_dir ('data', 0777);
-&make_dir ('data/README',   "Private data directory.\n\nNEVER ACCESS THIS from the web.\n");
+&make_file('data/README',   "Private data directory.\n\nNEVER ACCESS THIS from the web.\n");
 &copy_file('htaccess_deny', 'data/.htaccess');
 
 &make_dir ('pub', 0777);
@@ -130,6 +133,8 @@ print "\n";
 sub make_dir {
 	my $dir = shift;
 	my $mod = shift;
+	if (-d "$TARDIR/$dir") { return; }
+
 	print "create directory: $dir\n";
 	mkdir("$TARDIR/$dir");
 	if ($mod) {
@@ -140,6 +145,10 @@ sub make_dir {
 sub copy_file {
 	my $src = shift;
 	my $des = shift;
+	if (!$FORCE && -e "$TARDIR/$des") {
+		print "already exists  : $des\n";
+		return;
+	}
 	print "create file     : $des\n";
 
 	my $lines = $ROBJ->fread_lines("$TPLDIR/$src");
@@ -152,6 +161,10 @@ sub copy_file {
 sub make_file {
 	my $file  = shift;
 	my $lines = shift;
+	if (!$FORCE && -e "$TARDIR/$file") {
+		print "already exists  : $file\n";
+		return;
+	}
 	print "create file     : $file\n";
 	$ROBJ->fwrite_lines("$TARDIR/$file", $lines);
 }
