@@ -4,13 +4,14 @@ use strict;
 # Sakia initalizer
 #						Copyright (C)2023 nabe@abk
 #-------------------------------------------------------------------------------
-my $LastUpdate = '2023.08.09';
+my $LastUpdate = '2023.08.11';
 ################################################################################
 # Default setting
 ################################################################################
 my $BASE = './';
 my $NAME;
 my $FORCE;
+my $README=1;
 
 my $GIT_SAKIA = 'git@github.com:nabe-abk/Sakia.git';
 #-------------------------------------------------------------------------------
@@ -23,8 +24,9 @@ my $GIT_SAKIA = 'git@github.com:nabe-abk/Sakia.git';
 	while(@ARGV) {
 		my $x = shift(@ARGV);
 		if ($x eq '-b') { $BASE =shift(@ARGV); next; }
-		if ($x eq '-f') { $FORCE=1; next; }
-		if ($x eq '-h') { $HELP =1; next; }
+		if ($x eq '-f') { $FORCE=1;  next; }
+		if ($x eq '-n') { $README=0; next; }
+		if ($x eq '-h') { $HELP =1;  next; }
 		push(@ary, $x);
 	}
 	$NAME = shift(@ary);
@@ -36,11 +38,19 @@ Usage: $0 [options] <project-name>
 Available options are:
   -b		Base directory (default: ./)
   -f		Force overwrite
+  -n		No README file
   -h		View this help
 HELP
 		exit;
 	}
 
+	if ($NAME eq './') {
+		require Cwd;
+		my $dir = Cwd::getcwd();
+		$NAME   = $dir =~ m|([^/]+)$| ? $1 : '';
+		print "Auto detect project name: $NAME\n";
+		chdir('..');
+	}
 	if ($NAME eq '') {
 		$err .= "Require project name argument.\n";
 	}
@@ -68,9 +78,18 @@ if (!-d $TARDIR) {
 my $LIBDIR = "$TARDIR/lib";
 &make_dir("lib");
 
-if (!-d "$LIBDIR/Sakia/.git") {
-	print "clone from $GIT_SAKIA\n";
-	system("git -C '$LIBDIR' clone $GIT_SAKIA") && exit;
+if (!-d "$LIBDIR/Sakia/.git" && !-r "$TARDIR/.git/modules/lib/Sakia/index") {
+	my $cmd;
+	if (-d "$TARDIR/.git") {
+		# clone for submodule
+		print "submodule clone from $GIT_SAKIA\n";
+		$cmd = "git -C '$TARDIR' submodule add $GIT_SAKIA lib/Sakia";
+	} else {
+		print "clone from $GIT_SAKIA\n";
+		$cmd = "git -C '$LIBDIR' clone $GIT_SAKIA";
+	}
+	print "$cmd\n";
+	system($cmd) && exit;
 }
 my $TPLDIR = "$LIBDIR/Sakia/_template";
 
@@ -99,32 +118,36 @@ print "\n";
 # copy other files
 #--------------------------------------------------------------------------------
 &make_dir ("lib/SakiaApp");
-&copy_file("app.pm", "lib/SakiaApp/$NAME.pm");
+&copy_file("app.pm",         "lib/SakiaApp/$NAME.pm");
+&copy_file("_htaccess_deny", "lib/.htaccess");
+&copy_file("_htaccess_deny", "lib/.htaccess");
 
 &make_dir ('__cache', 0777);
 &make_file('__cache/README', "Skeleton cache directory.\n\nNEVER ACCESS THIS from the web.\n");
-&copy_file("htaccess_deny",  "__cache/.htaccess");
+&copy_file("_htaccess_deny", "__cache/.htaccess");
 
 &make_dir ('skel');
-&copy_file('htaccess_deny', 'skel/.htaccess');
+&copy_file('_htaccess_deny', 'skel/.htaccess');
 my $files = $ROBJ->search_files("$TPLDIR/", { ext => '.html' });
 foreach(@$files) {
 	&copy_file($_, "skel/$_");
 }
 
 &make_dir ('data', 0777);
-&make_file('data/README',   "Private data directory.\n\nNEVER ACCESS THIS from the web.\n");
-&copy_file('htaccess_deny', 'data/.htaccess');
+&make_file('data/README',    "Private data directory.\n\nNEVER ACCESS THIS from the web.\n");
+&copy_file('_htaccess_deny', 'data/.htaccess');
 
 &make_dir ('pub', 0777);
-&make_file('pub/README', "Public data directory.\n");
+&make_file('pub/README',   "Public data directory.\n");
+&make_file('pub/.gitkeep', '');
 
 &make_dir ('js');
 &make_dir ('theme');
 &make_file('theme/README', "CSS directory.\n");
 &copy_file('theme.css',    'theme/theme.css');
 
-&copy_file('htaccess_root', '.htaccess');
+&copy_file('_htaccess_root', '.htaccess');
+&copy_file('_gitignore',     '.gitignore');
 
 
 ################################################################################
@@ -161,6 +184,8 @@ sub copy_file {
 sub make_file {
 	my $file  = shift;
 	my $lines = shift;
+	if (!$README && $file =~ m|/README|) { return; }	# not create readme
+
 	if (!$FORCE && -e "$TARDIR/$file") {
 		print "already exists  : $file\n";
 		return;
