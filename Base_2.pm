@@ -328,6 +328,7 @@ sub crypt {
 		$CryptMode ||= 8<length(crypt('', '$6$')) ? '$6$' : 0;	# SHA512
 		$CryptMode ||= 8<length(crypt('', '$5$')) ? '$5$' : 0;	# SHA256
 		$CryptMode ||= 8<length(crypt('', '$1$')) ? '$1$' : 0;	# MD5
+		$CryptMode ||= '';
 	}
 	return $CryptMode ? crypt($x, "$CryptMode$salt") : crypt($x, $salt);
 }
