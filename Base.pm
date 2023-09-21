@@ -1008,7 +1008,6 @@ sub error_from {
 	my $from = shift || $self->make_call_from();
 	my $msg  = $self->translate(@_) . " ($from)";
 	$self->esc_dest($msg);
-	$msg =~ s/\r?\n/ /g;
 	push(@{$self->{Error}}, $msg);
 	return $msg;
 }
