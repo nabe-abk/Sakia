@@ -91,7 +91,7 @@ sub debug {
 	my $ROBJ = $self->{ROBJ};
 
 	$sql =~ s/\?/@ary ? ($ary[0] =~ m|^\d+$| ? shift(@ary) : "'" . shift(@ary) . "'") : '?'/eg;
-	$ROBJ->_debug('['.$self->{_RDBMS}.'] '.$sql, 1);	## safe
+	$ROBJ->_debug('['.$self->{DBMS}.'] '.$sql, 1);	## safe
 }
 sub error {
 	my $self = shift;
@@ -101,7 +101,7 @@ sub error {
 		$self->error_hook(@_);
 	}
 	my $func = $self->{no_error} ? 'warning' : 'error';
-	$ROBJ->$func('['.$self->{_RDBMS}.'] '.$err, @_);
+	$ROBJ->$func('['.$self->{DBMS}.'] '.$err, @_);
 }
 
 1;

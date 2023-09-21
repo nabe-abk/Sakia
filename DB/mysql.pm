@@ -27,7 +27,7 @@ sub new {
 
 	# 初期設定
 	$self->{__FINISH} = 1;
-	$self->{RDBMS}    = 'MySQL';
+	$self->{DBMS}     = 'MySQL';
 	$self->{db_id}    = "my.$database.";
 	$self->{exist_tables_cache} = {};
 	$self->{unique_text_size} = 128;	# 256以上はエラーのことがある

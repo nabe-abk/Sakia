@@ -32,7 +32,7 @@ sub new {
 	$self->{dir}  = $dir;
 
 	# ディフォルト値
-	$self->{RDBMS}  = 'Text-DB';
+	$self->{DBMS}   = 'Text-DB';
 	$self->{db_id}  = "$dir:";
 	$self->{ext}  ||= ".dat";
 	$self->{index_file}  = "#index" . $self->{ext};

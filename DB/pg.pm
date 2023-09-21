@@ -27,7 +27,7 @@ sub new {
 
 	# 初期設定
 	$self->{__FINISH} = 1;
-	$self->{RDBMS}    = 'PostgreSQL';
+	$self->{DBMS}  	  = 'PostgreSQL';
 	$self->{db_id}    = "pg.$database.";
 	$self->{exist_tables_cache} = {};
 
