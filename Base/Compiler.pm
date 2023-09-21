@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2023 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.09';
+our $VERSION = '3.10';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -282,6 +282,12 @@ $B->{esc_csv}=<<'FUNC';
 	if (substr($val,0,1) ne '"' && $val !~ /[\n,]/) { return $val; }
 	$val =~ s/"/""/g;
 	return '"' . $val . '"';
+FUNC
+
+$B->{concat}=<<'FUNC';
+	my @ary;
+	foreach(@_) { push(@ary, @$_); }
+	return \@ary;
 FUNC
 
 #-------------------------------------------------------------------------------
