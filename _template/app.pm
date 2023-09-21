@@ -70,7 +70,6 @@ sub select_skeleton {
 	my ($dir,$file) = $self->parse_skel( $skel );
 	my $skel = "$dir$file" || $self->{main_skel};
 
-	# スケルトンの存在確認
 	if ($skel ne '' && !$ROBJ->find_skeleton($skel)) {
 		$ROBJ->redirect( $ROBJ->{myself} );
 	}
