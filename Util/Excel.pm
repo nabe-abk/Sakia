@@ -48,9 +48,7 @@ sub new {
 			}
 		}
 		$wd .= ".$ext";
-
-		mkdir($wd);
-		if (!-r $wd || !-w $wd || !-x $wd) {
+		if (!$self->{DEBUG} && !mkdir($wd) || !-r $wd || !-w $wd || !-x $wd) {
 			return $self->error("working direcotry '$wd' error!");
 		}
 	}
