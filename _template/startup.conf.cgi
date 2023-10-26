@@ -47,12 +47,15 @@
 #-------------------------------------------------------------------------------
 # Form setting
 #-------------------------------------------------------------------------------
-<$If_post_exec_pre = begin>
-	<$Form_options.total_max_size = 256K>
-	<$Form_options.str_max_chars  =   80>	# word count
-	<$Form_options.txt_max_chars  =    0>	# 0 is no limit
-
-	<$Form_options.allow_multipart = false>
-
+<$FromOptFunc = begin_func>
 	<$resolve_host()>
+
+	<$local(opt) = {}>
+	<$opt.max_size = 256K>
+	<$opt.str_max_chars = 64>	# word count
+	<$opt.txt_max_chars = 0>	# 0 is no limit
+
+	<$opt.allow_multi = false>
+	<$opt.multi_max_size = 16M>
+	<$return(opt)>
 <$end>
