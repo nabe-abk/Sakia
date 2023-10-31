@@ -113,8 +113,8 @@ sub start {
 		$env = $conf = '__(internal_error)__';
 	}
 
-	if (-r $env) { $self->_call($env); }		# run .env file
-	$self->{ConfResult} = $self->_call($conf);	# run .conf file
+	if (-r $env) { $self->_call($env); }				# run .env file
+	$self->{ConfResult} = $self->_call($self->{ConfFile} || $conf);	# run .conf file
 
 	$self->init_tm();
 	$self->init_path();
