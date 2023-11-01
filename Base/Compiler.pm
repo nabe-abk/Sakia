@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2023 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.10';
+our $VERSION = '3.11';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -852,8 +852,7 @@ sub parse_block {
 	my $blk = {
 		cnt	=> $block_cnt,
 		lv 	=> $block_lv,
-		code	=> $in_code,
-		first	=> 1
+		code	=> $in_code
 	};
 	my @blocks;
 
@@ -873,14 +872,18 @@ main:	foreach my $line (@$lines) {
 		# <$elsif(...)>
 		#---------------------------------------------------------------
 		if ($po0 eq 'elsif') {
-			if ($blk->{else}) {
+			if (!$blk->{ifexec}) {
+				$self->error_from($line, 'Exists "%s" without "%s".', $po0, 'ifexec');
+				next;
+			} elsif ($blk->{ifexec}->{else}) {
 				$self->error_from($line, 'Exists "%s" after "%s".', $po0, 'else');
 				next;
 
-			} elsif (!$blk->{ifexec}) {
-				$self->error_from($line, 'Exists "%s" without "%s".', $po0, 'ifexec');
-				next;
 			}
+
+			# save ifexec info
+			$blk->{ifexec}->{elsif} = 1;
+
 			# save line info
 			$line->{elsif}     = 1;
 			$line->{block_end} = $blk->{cnt};
@@ -896,19 +899,20 @@ main:	foreach my $line (@$lines) {
 		if ($po0 =~ /^else(|\.\w+)$/) {
 			my $label = $1;
 
-			if ($blk->{else}) {
-				$self->error_from($line, 'Exists "%s" duplicate in "ifexec".', $po0);
+			if ($label ne $blk->{label} || !$blk->{ifexec}) {
+				$self->error_from($line, 'Exists "%s" without "%s".', $po0, 'ifexec');
 				delete $line->{poland};
 				next;
-
-			} elsif ($label ne $blk->{label} || !$blk->{ifexec}) {
-				$self->error_from($line, 'Exists "%s" without "%s".', $po0, 'ifexec');
+			} elsif ($blk->{ifexec}->{else}) {
+				$self->error_from($line, 'Exists "%s" duplicate in "ifexec".', $po0);
 				delete $line->{poland};
 				next;
 			}
 
+			# save ifexec info
+			$blk->{ifexec}->{else} = 1;
+
 			# save line info
-			$blk->{else}       = 1;
 			$line->{else}      = 1;
 			$line->{block_end} = $blk->{cnt};
 			$line->{block_lv}  = $block_lv-1;
@@ -936,10 +940,18 @@ main:	foreach my $line (@$lines) {
 			my $type  = $1;
 			my $label = $2;
 
-			if ($blk->{first} || $type && $type ne $blk->{type} || $label ne $blk->{label}) {
+			if ($blk->{lv}==0 || $type && $type ne $blk->{type} || $label ne $blk->{label}) {
 				$self->error_from($line, 'Exists "%s" without "%s".', $po0, 'begin');
 				delete $line->{poland};
 				next;
+			}
+			if ($blk->{ifexec}) {
+				if ($blk->{ifexec}->{end}) {
+					$self->error_from($line, 'Exists "%s" duplicate in "ifexec".', $po0);
+					delete $line->{poland};
+					next;
+				}
+				$blk->{ifexec}->{end} = 1;
 			}
 
 			# save line info
@@ -989,6 +1001,7 @@ main:	foreach my $line (@$lines) {
 		#---------------------------------------------------------------
 		my $find;
 		my $non_code = !$blk->{code};
+		my $ifexec   = $po0 eq 'ifexec' ? {} : undef;
 		foreach(reverse(0..$polen)) {
 			if ($po->[$_] !~ /^begin(_\w+)?(\.\w+)?$/) { next; }
 
@@ -1011,19 +1024,19 @@ main:	foreach my $line (@$lines) {
 				type	=> $1,
 				code	=> $1 eq '' || $1 eq '_func',
 				label	=> $2,
-				ifexec	=> $po0 eq 'ifexec',
+				ifexec	=> $ifexec,
 				comple	=> $comple,
 				line	=> $line
 			};
 			$line->{block_state}= $BlockStatement{$po0};
-			$line->{ifexec}     = $blk->{ifexec};
+			$line->{ifexec}     = $ifexec;
 
 			$po->[$_] = "\x01begin" . $1 . '.' . $block_cnt;	# append block number
 		}
 	}
 
 	foreach(@blocks, $blk) {
-		if ($_->{first}) { next; }
+		if ($_->{lv} == 0) { next; }
 		$self->error_from($_->{line}, 'Not found "end" corresponding to "%s".', $_->{orig});
 		delete $_->{poland};
 	}
