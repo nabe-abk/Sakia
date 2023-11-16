@@ -1585,13 +1585,10 @@ sub p2e_function {
 		};
 
 		if ($y eq 'if') {
-			if ($#arg==2) {
-				&$parentheses($OPR{'?'});	# <<:higher op / vv: lowere op
-				return ("$arg[0] ? $arg[1] : $arg[2]", '', $OPR{'?'});
-			} elsif ($#arg==1) {
-				my $rep = $st->{line}->{replace} || !$st->{last_op} ? " || undef" : '';
-				&$parentheses($OPR{'&&'});	# <<:higher op / vv: lowere op
-				return ("$arg[0] && $arg[1]$rep", '', $OPR{'||'});
+			if ($#arg==1 || $#arg==2) {
+				&$parentheses($OPR{'?'});	# <<:higher op / vv: lower op
+				my $else = $#arg==2 ? $arg[2] : 'undef';
+				return ("$arg[0] ? $arg[1] : $else", '', $OPR{'?'});
 			}
 		}
 		if ($y eq 'ifset') {
