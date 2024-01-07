@@ -346,8 +346,9 @@ sub set_cookie {
 	my ($self, $name, $val, $exp, $_opt) = @_;
 	my $opt = {
 		path	=> $self->{Basepath},
-		httponly=> 1,
 		samesite=> 'Lax',
+		httponly=> 1,
+		secure	=> $self->{ServerURL} =~ /^https/i,
 	%{$_opt || {}} };
 
 	if (ref($val) eq 'ARRAY') {
@@ -367,7 +368,8 @@ sub set_cookie {
 		$c .= '; domain=' . $self->esc($opt->{domain});
 	}
 
-	$c .= $opt->{secure}   ? '; secure' : ($opt->{http} ? '; httponly' : '');
+	$c .= $opt->{httponly} ? '; httponly' :	'';
+	$c .= $opt->{secure}   ? '; secure'   : '';
 	$c .= $opt->{samesite} ? "; samesite=$opt->{samesite}" : '';
 	if ($opt->{append}) {
 		$c .= '; ' . $opt->{append};
