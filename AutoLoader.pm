@@ -28,8 +28,8 @@ sub AUTOLOAD {
 	foreach my $i (1..99) {
 		my $file;
 		if ($i==1) {
-			# load xxx_yyy() to xxx.pm file
-			if ($func !~ /^([A-Za-z][A-Za-z0-9]*)_/) { next; }
+			# load xxx__yyy() to xxx.pm file
+			if ($func !~ /^([A-Za-z][A-Za-z0-9]*)__/) { next; }
 			$file = $pmfile . $1 . '.pm';
 		} else {
 			$file = $pmfile . $i . '.pm';
