@@ -1364,7 +1364,7 @@ sub normalize_dest {
 	$self->trim_dest(@_);
 	foreach(@_) {
 		$_ =~ s/[ \t]+/ /g;
-		$_ =~ s/[\x00-\x1f]//g;
+		$_ =~ s/[\x00-\x09\x0b-\x1f]//g;
 	}
 	return join('',@_);
 }
