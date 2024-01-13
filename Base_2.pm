@@ -87,7 +87,7 @@ sub _read_form {
 	my $ctype = $ENV{CONTENT_TYPE};
 	my $multi = $ctype =~ m|^multipart/form-data;|;
 	if ($multi) {
-		if (exists($opt->{multi_allow}) && !$opt->{multi_allow}) {
+		if (exists($opt->{allow_multi}) && !$opt->{allow_multi}) {
 			return $self->_read_form_exit('Not allow multipart/form-data.');
 		}
 	}
@@ -166,11 +166,12 @@ sub _read_multipart_form {
 	binmode($self->{STDIN});	# for Windows
 	my $use_temp = $opt->{use_temp};
 
-	if ($ctype !~ /boundary=(.*)/) {
+	if ($ctype !~ /boundary=("?)(.*)\1/) {
 		return $self->_read_form_exit('Failed to load multipart form.');
 	}
-	my $bound = $1;
-	my $buf   = $self->loadpm('Base::BufferedRead', $self->{STDIN}, $clen, $opt->{multi_buf_size});
+	my $bound = $2;
+
+	my $buf = $self->loadpm('Base::BufferedRead', $self->{STDIN}, $clen, $opt->{multi_buf_size});
 	$buf->read("--$bound\r\n");
 
 	$bound = "\r\n--$bound";
@@ -184,8 +185,10 @@ sub _read_multipart_form {
 			if ($line eq '') { last; }
 			if ($line =~ /^Content-Disposition:(.*)$/i) {
 				$line = $1;
-				if ($line =~ /name="((?:\\\"|.)*?)"/i)     { $key   = $1 =~ s/\\"/"/rg; }
-				if ($line =~ /filename="((?:\\\"|.)*?)"/i) { $fname = $1 =~ s/\\"/"/rg; }
+				if    ($line =~ /name=([^\s\";]+)/i)      { $key = $1; }
+				elsif ($line =~ /name="((?:\\\"|.)*?)"/i) { $key = $1 =~ s/\\"/"/rg; }
+				if    ($line =~ /filename=([^\s\";]+)/i)      { $fname = $1; }
+				elsif ($line =~ /filename="((?:\\\"|.)*?)"/i) { $fname = $1 =~ s/\\"/"/rg; }
 			}
 		}
 		if (!defined $key) { next; }	# last data
