@@ -82,7 +82,7 @@ sub _read_form {
 	if ($self->{POST_ERR}) { return; }
 	if ($self->{Form}) { return $self->{Form}; }
 
-	my $opt = shift || ($self->{FromOpt} ||= $self->{FromOptFunc} && $self->execute($self->{FromOptFunc}));
+	my $opt = shift || ($self->{FormOpt} ||= $self->{FormOptFunc} && $self->execute($self->{FormOptFunc}));
 
 	my $ctype = $ENV{CONTENT_TYPE};
 	my $multi = $ctype =~ m|^multipart/form-data;|;
