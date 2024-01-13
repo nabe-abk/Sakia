@@ -30,6 +30,9 @@ sub parse {
 	my $ROBJ = $self->{ROBJ};
 	my $code = shift || $ROBJ->{SystemCode};
 
+	if (!ref($ary)) {
+		$ary = [ map { "$_\n" } split(/\r?\n/, $ary) ];
+	}
 	my $mail = $self->parse_mail_header($ary, $code);
 
 	#-----------------------------------------
@@ -76,7 +79,7 @@ sub parse {
 		$x =~ s/[\r\n]//g;
 		if ($x ne $boundary && $x ne $b2) { next; }
 		while(@$ary) {
-			my $h = $self->parse_mail_header($ary);
+			my $h = $self->parse_mail_header($ary, $code);
 			my $type   = $h->{content_type};
 			my $encode = $h->{content_transfer_encoding};
 
