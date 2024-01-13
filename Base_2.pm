@@ -195,6 +195,14 @@ sub _read_multipart_form {
 
 		my $val;
 		if (defined $fname) {
+			$fname =~ s/=\?([\w\-]*)\?[Bb]\?([A-Za-z0-9\+\/=]*)\?=/
+				require MIME::Base64;
+				require Encode;
+				my $mime_code = $1;
+				my $str = MIME::Base64::decode_base64($2);
+				Encode::from_to($str, $mime_code, $self->{SystemCode});
+				$str
+			/eg;
 			$fname =~ tr|\\|/|;
 			$fname =~ s|^.*/([^/]*)$|$1|;
 			$fname =~ s/[\x00-\x08\x0A-\x1F\x7F\"]//g;	# Remove CTRL code and '"'
