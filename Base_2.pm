@@ -144,7 +144,7 @@ sub check_form_data {
 		$v =~ s/[\x00-\x08\x0B-\x1F\x7F]//g;	# remove ctrl code except TAB LF
 
 		my $max = $type eq '_txt' ? $opt->{txt_max_chars} : $opt->{str_max_chars};
-		if ($max && $max<length($v)) {
+		if ($max && $max<$self->mb_length($v)) {
 			$self->msg("Form data '%s' is too long and has been limited to %d characters.", $k, $max);
 			$v = $self->mb_substr($v, 0, $max);
 		}
