@@ -36,12 +36,10 @@ sub parse {
 
 sub parse_line {
 	my $line = shift;
-	$line =~ s/\x00//g;
-	$line =~ s/""/\x00/g;
 
 	my @ary;
-	$line =~ s!(?:^|,)(?:"([^"]*)"|([^,\"]+|))!
-		my $x = "$1$2";
+	$line =~ s!(?:^|,)(?:"((?|""|[^"])*)"|([^,\"]+|))!
+		my $x = $1 ne '' ? $1 =~ s/""/\"/gr : $2;
 		$x =~ tr/\x00/"/;
 		push(@ary, $x);
 	!eg;
