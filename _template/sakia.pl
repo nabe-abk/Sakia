@@ -175,8 +175,10 @@ sub copy_file {
 	print "create file     : $des\n";
 
 	my $lines = $ROBJ->fread_lines("$TPLDIR/$src");
+	my $year  = (localtime())[5] + 1900;
 	foreach(@$lines) {
 		$_ =~ s/<\@NAME>/$NAME/g;
+		$_ =~ s/<\@YEAR>/$year/g;
 	}
 	$ROBJ->fwrite_lines("$TARDIR/$des", $lines);
 }
