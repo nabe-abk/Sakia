@@ -56,7 +56,7 @@ sub main {
 	#-------------------------------------------------------------
 	my $skel = $self->select_skeleton( substr($ENV{PATH_INFO},1) );
 
-	$self->output_html( $ROBJ->call($skel) );
+	$self->output_html( $skel );
 }
 
 #-------------------------------------------------------------------------------
@@ -93,13 +93,14 @@ sub parse_skel {
 #-------------------------------------------------------------------------------
 sub output_html {
 	my $self = shift;
+	my $skel = shift;
 	my $ROBJ = $self->{ROBJ};
 
 	my $out;
 	if ($self->{action_is_main}) {
 		$out = $self->{action_data};
 	} else {
-		$out = $ROBJ->call( $self->{skeleton} );
+		$out = $ROBJ->call( $skel );
 	}
 
 	my $frame = $self->{frame_skel};
