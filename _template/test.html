@@ -21,7 +21,7 @@ document.getElementById('btn').addEventListener('click', function(evt){
 	const list = document.querySelectorAll('#form input');
 	for(const d of list) d.className='';	// remove 'error' class
 
-	const data = new FormData( document.getElementById('form') );
+	const data = new URLSearchParams(new FormData( document.getElementById('form') ));
 
 	const result   = document.getElementById('result');
 	const textarea = document.getElementById('textarea');
@@ -30,6 +30,7 @@ document.getElementById('btn').addEventListener('click', function(evt){
 
 	fetch('<@myself>', {
 		method: 'POST',
+		headers: {"Content-Type": "application/x-www-form-urlencoded"},
 		body: data
 	}).then((res) => {
 		if (!res.ok) throw 'Failed ajax request';
