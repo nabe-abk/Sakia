@@ -38,7 +38,7 @@ sub main {
 	#-------------------------------------------------------------
 	if ($ROBJ->{POST}) {
 		my $action = $ROBJ->{Form}->{action};
-		if ($action =~ /^\w*_ajax_\w+$/) {
+		if ($action =~ /^(?:\w+_)?_ajax_\w+$/) {
 			my $data = $self->ajax_function( $action );
 
 			# Append debug message
