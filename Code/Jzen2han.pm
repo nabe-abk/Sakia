@@ -6,7 +6,7 @@ use strict;
 package Sakia::Code::Jzen2han;
 use utf8;
 use Encode ();
-our $VERSION = '1.00';
+our $VERSION = '1.10';
 ################################################################################
 # constructor
 ################################################################################
@@ -28,8 +28,10 @@ sub utf8_zen2han {
 	my $flag = utf8::is_utf8($$str);
 	Encode::_utf8_on($$str);
 
-	if ($opt->{alpha_only}) {
-		$$str =~ tr/０-９Ａ-Ｚａ-ｚ/ 0-9A-Za-z/;
+	if ($opt->{number_only}) {
+		$$str =~ tr/０-９/0-9/;
+	} elsif ($opt->{alpha_only}) {
+		$$str =~ tr/０-９Ａ-Ｚａ-ｚ/0-9A-Za-z/;
 	} elsif ($opt->{arc}) {
 		$$str =~ tr/　！”＃＄％＆’（）＊＋，－．／０-９：；＜＝＞？＠Ａ-Ｚ［￥］＾＿｀ａ-ｚ｛｜｝/ -}/;
 	} else {
