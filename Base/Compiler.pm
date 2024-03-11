@@ -1,10 +1,10 @@
 use strict;
 #-------------------------------------------------------------------------------
 # skeleton compiler
-#						(C)2006-2023 nabe@abk
+#						(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.11';
+our $VERSION = '3.12';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -411,7 +411,7 @@ sub preprocessor {
 	my $chain_line    = 0;
 	my $sharp_comment = 0;
 
-	my $lnum = 0;		# line number counter
+	my $lnum = -1;		# line number counter, -1 for default pragma
 	my @out;
 	foreach(@$lines) {
 		$lnum++;
