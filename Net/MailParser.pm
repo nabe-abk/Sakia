@@ -1,10 +1,10 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Mail Parser module
-#							(C)2006-2022 nabe@abk
+#							(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Net::MailParser;
-our $VERSION = '1.03';
+our $VERSION = '1.10';
 use Encode;
 ################################################################################
 # base
@@ -159,7 +159,7 @@ sub parse_mail_header {
 		$x =~ s/[\r\n]//g;
 		if ($x =~ /^[ \t]+.*/) {
 			# RFC 2822 FWS / RFC 2234 WSP
-			$v .= ($n =~ /^Received$/i ? "\n" : '') . $x;
+			$v .= ($n =~ /^(?:Received|DKIM-.*)$/i ? "\n" : '') . $x;
 			next;
 		} 
 		if (defined $n) {
@@ -242,7 +242,7 @@ sub mime_decode_line {
 	if ($line !~ /=\?.*\?=/) { return $line; }
 	$line =~ s/\x00//g;
 
-	# save MIME
+	# MIME
 	my @buf;
 	$line =~ s/=\?([\w\-]*)\?[Bb]\?([A-Za-z0-9\+\/=]*)\?=/
 		my $mime_code = $1;
@@ -251,9 +251,19 @@ sub mime_decode_line {
 		push(@buf, $str);
 		"\x00$#buf\x00";
 	/eg;
+
+	# Quoted-Printable
+	$line =~ s!=\?([\w\-]*)\?[Qq]\?((?:=[0-9A-Fa-f][0-9A-Fa-f]|[^=]+)*)\?=!
+		my $mime_code = $1;
+		my $str = $2;
+		$str =~ s/=([0-9A-Fa-f][0-9A-Fa-f])/chr(hex($1))/eg;
+		Encode::from_to($str, $mime_code, $code);
+		push(@buf, $str);
+		"\x00$#buf\x00";
+	!eg;
+
 	$line =~ s/\x00[\t ]+\x00/\x00\x00/g;	# RFC 2047
 	$line =~ s/\x00(\d+)\x00/$buf[$1]/g;	# recovery buffer
-
 	return $line;
 }
 
