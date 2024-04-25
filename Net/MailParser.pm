@@ -3,8 +3,9 @@ use strict;
 # Mail Parser module
 #							(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
+#
 package Sakia::Net::MailParser;
-our $VERSION = '1.11';
+our $VERSION = '1.12';
 use Encode;
 ################################################################################
 # base
@@ -19,11 +20,8 @@ sub new {
 }
 
 ################################################################################
-# parser
-################################################################################
-#-------------------------------------------------------------------------------
 # parser main
-#-------------------------------------------------------------------------------
+################################################################################
 sub parse {
 	my $self = shift;
 	my $ary  = shift;
@@ -45,54 +43,20 @@ sub parse {
 	#-----------------------------------------------------------------------
 	# parse mail body
 	#-----------------------------------------------------------------------
-	my $mail_code='UTF-8';
-	my $mail_type = $mail->{content_type};
-	if ($mail_type =~ /;\s*charset="(.*?)"/i || $mail_type =~ /;\s*charset=([^\s;]*)/i) { $mail_code=$1; }
-
 	my @parts;
 
-	if ($mail_type =~ m#^multipart/\w+;\s*boundary=(?:"(.*?)"|([^\s]*))#i) {
-		#---------------------------------------------------------------
-		# multipart
-		#---------------------------------------------------------------
+	my $ctype = $mail->{content_type};
+	if ($ctype =~ m|^multipart/(\w+)|i) {
 		$self->{DEBUG} && $ROBJ->debug("*** mail is multipart ***");
 
-		my $boundary = "--$1$2";
-		my $b1 = $boundary;
-		my $b2 = "$boundary--";
-
-		my $count=0;
-		while(@$ary) {
-			my $x = shift(@$ary);
-			$x =~ s/[\r\n]//g;
-			if ($x ne $boundary && $x ne $b2) { next; }
-			while(@$ary) {
-				if ($ary->[0] eq '') { next; }
-				my $part_h = $self->parse_mail_header($ary, $outcode);
-				my $type   = $part_h->{content_type};
-				my $encode = $part_h->{content_transfer_encoding} =~ tr/A-Z/a-z/r;
-
-				my $part = {
-					type	=> $type,
-					encode	=> $encode
-				};
-				push(@parts, $part);
-
-				if ($part_h->{content_disposition}) {
-					my $x = $self->parse_header_line( $part_h->{content_disposition}, $outcode );
-					if (exists $x->{filename}) {
-						$part->{filename} = $x->{filename};
-					} else {
-						#  filename from Content-type
-						my $x = $self->parse_header_line( $type, $outcode );
-						if (exists $x->{name}) {
-							$part->{filename} = $x->{name};
-						}
-					}
-				}
-				my $data = $self->read_until_boundary($ary, $boundary);
-				$part->{data} = $self->decode_part_body($data, $type, $encode);
+		my $mixed = $1 =~ /mixed/i;
+		my @list  = $self->parse_part($ary, $ctype, $outcode);
+		foreach(@list) {
+			if ($mixed && $_->{type} =~ m|multipart/|) {
+				push(@parts, $self->parse_part([ split(/\n/, $_->{data}) ], $_->{type}, $outcode));
+				next;
 			}
+			push(@parts, $_);
 		}
 
 	} else {
@@ -104,15 +68,27 @@ sub parse {
 		my $text = join('', @$ary);
 		push(@parts, {
 			main	=> 1,
-			type	=> $mail_type,
-			encode	=> $mail_code,
-			data	=> $self->decode_part_body($text, $mail_type, $mail_code)
+			type	=> $ctype,
+			data	=> $self->decode_part_body($text, $ctype, $mail->{content_transfer_encoding})
 		});
 	}
 
 	foreach(@parts) {
-		$_->{size} = length($_->{data});
-		$self->{DEBUG} && $ROBJ->debug("Part: $_->{type} $_->{encode} $_->{filename} $_->{size} byte");
+		my $type = $_->{type};
+		if ($type =~ m|^text/|) {
+			$_->{charset} = ($type =~ /;\s*charset="(.*?)"/i || $type =~ /;\s*charset=([^\s;]*)/i) ? $1 : 'UTF-8';
+		}
+		$_->{size}  = length($_->{data});
+		$_->{_type} = $type =~ s/;.*//r;
+
+		if ($self->{DEBUG}) {
+			my $msg='';
+			foreach my $t (qw(_type encode charset filename size)) {
+				if (!exists($_->{$t})) { next; }
+				$msg .= " $t=$_->{$t}";
+			}
+			$ROBJ->debug("Part:$msg");
+		}
 	}
 
 	#-----------------------------------------------------------------------
@@ -130,8 +106,7 @@ sub parse {
 			$mail->{body} = $_->{data};
 
 			my $type = $_->{type};
-			my $code = 'UTF-8';
-			if ($type =~ /;\s*charset="(.*?)"/i || $type =~ /;\s*charset=([^\s;]*)/i) { $code=$1; }
+			my $code = $_->{charset} || 'UTF-8';
 			Encode::from_to($mail->{body}, $code, $outcode);
 			next;
 		}
@@ -145,9 +120,66 @@ sub parse {
 	return $mail;
 }
 
-#-----------------------------------------------------------
+#-------------------------------------------------------------------------------
+# parse multipart
+#-------------------------------------------------------------------------------
+sub parse_part {
+	my $self    = shift;
+	my $ary     = shift;
+	my $ctype   = shift;
+	my $outcode = shift;
+
+	if ($ctype !~ m#^multipart/\w+;\s*boundary=(?:"(.*?)"|([^\s]*))#i) {
+		return;
+	}
+	my $boundary = "--$1$2";
+	my $b1 = $boundary;
+	my $b2 = "$boundary--";
+
+	my @parts;
+	while(@$ary) {
+		my $x = shift(@$ary);
+		$x =~ s/[\r\n]//g;
+		if ($x ne $boundary && $x ne $b2) { next; }
+		while(@$ary) {
+			if ($ary->[0] =~ /^[\r\n]*$/) { shift(@$ary); next; }
+			my $part_h = $self->parse_mail_header($ary, $outcode);
+			my $type   = $part_h->{content_type};
+			my $encode = $part_h->{content_transfer_encoding};
+
+			my $part = {
+				type	=> $type,
+				encode	=> $encode
+			};
+			push(@parts, $part);
+
+			#  filename from Content-type
+			my $ct = $self->parse_header_line( $type, $outcode );
+			if (exists $ct->{name}) {
+				$part->{filename} = $ct->{name};
+			}
+			# filename from Content-Disposition
+			my $desc = $part_h->{content_disposition};
+			if ($desc) {
+				my $x = $self->parse_header_line( $desc, $outcode );
+				if (exists $x->{filename}) {
+					$part->{filename} = $x->{filename};
+				}
+			}
+
+			my $data = $self->read_until_boundary($ary, $boundary);
+			$part->{data} = $self->decode_part_body($data, $type, $encode);
+		}
+	}
+	return @parts;
+}
+
+################################################################################
+# parser subroutine
+################################################################################
+#-------------------------------------------------------------------------------
 # read until mutipart boundary
-#-----------------------------------------------------------
+#-------------------------------------------------------------------------------
 sub read_until_boundary {
 	my ($self, $ary, $boundary, $encode) = @_;
 	my $b2 = "$boundary--";
@@ -161,8 +193,12 @@ sub read_until_boundary {
 	return $data;
 }
 
+#-------------------------------------------------------------------------------
+# decode body
+#-------------------------------------------------------------------------------
 sub decode_part_body {
 	my ($self, $data, $type, $encode) = @_;
+	$encode =~ tr/A-Z/a-z/;
 
 	if ($encode eq 'base64') {
 		return $self->base64decode($data);
