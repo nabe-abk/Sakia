@@ -4,7 +4,7 @@ use strict;
 #							(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Net::MailParser;
-our $VERSION = '1.10';
+our $VERSION = '1.11';
 use Encode;
 ################################################################################
 # base
@@ -28,100 +28,120 @@ sub parse {
 	my $self = shift;
 	my $ary  = shift;
 	my $ROBJ = $self->{ROBJ};
-	my $code = shift || $ROBJ->{SystemCode};
+	my $outcode = shift || $ROBJ->{SystemCode};
 
 	if (!ref($ary)) {
 		$ary = [ map { "$_\n" } split(/\r?\n/, $ary) ];
 	}
-	my $mail = $self->parse_mail_header($ary, $code);
+	my $mail = $self->parse_mail_header($ary, $outcode);
 
-	#-----------------------------------------
+	#-----------------------------------------------------------------------
 	# parse addresses
-	#-----------------------------------------
+	#-----------------------------------------------------------------------
 	foreach(qw(from to cc replay)) {
 		$mail->{$_ . '_list'} = $self->parse_address_list($mail->{$_});
 	}
 
-	#-----------------------------------------
-	# parse main body
-	#-----------------------------------------
-	my $boundary;
-	{
-		my $mail_code='UTF-8';
-		my $type = $mail->{content_type};
-		if ($type =~ /;\s*charset="(.*?)"/i || $type =~ /;\s*charset=([^\s;]*)/i) { $mail_code=$1; }
-		if ($type !~ m#^multipart/\w+;\s*boundary=(?:"(.*?)"|([^\s]*))#i) {
-			$self->{DEBUG} && $ROBJ->debug("mail is simple");
+	#-----------------------------------------------------------------------
+	# parse mail body
+	#-----------------------------------------------------------------------
+	my $mail_code='UTF-8';
+	my $mail_type = $mail->{content_type};
+	if ($mail_type =~ /;\s*charset="(.*?)"/i || $mail_type =~ /;\s*charset=([^\s;]*)/i) { $mail_code=$1; }
 
-			my $text = join('', @$ary);
-			$text = $self->decode_quoted_printable($mail->{content_transfer_encoding}, $text);
-			Encode::from_to($text, $mail_code, $code);
-			$text = $self->decode_rfc3676( $type, $text );
-			$mail->{body} = $text;
-			return $mail;
-		}
-		$boundary = "--$1$2";
-	}
+	my @parts;
 
-	#-----------------------------------------
-	# parse multipart
-	#-----------------------------------------
-	my $b1 = $boundary;
-	my $b2 = "$boundary--";
+	if ($mail_type =~ m#^multipart/\w+;\s*boundary=(?:"(.*?)"|([^\s]*))#i) {
+		#---------------------------------------------------------------
+		# multipart
+		#---------------------------------------------------------------
+		$self->{DEBUG} && $ROBJ->debug("*** mail is multipart ***");
 
-	$self->{DEBUG} && $ROBJ->debug("mail is multipart");
+		my $boundary = "--$1$2";
+		my $b1 = $boundary;
+		my $b2 = "$boundary--";
 
-	my @attaches;
-	$mail->{attaches} = \@attaches;
-	my $count=0;
-	while(@$ary) {
-		my $x = shift(@$ary);
-		$x =~ s/[\r\n]//g;
-		if ($x ne $boundary && $x ne $b2) { next; }
+		my $count=0;
 		while(@$ary) {
-			my $h = $self->parse_mail_header($ary, $code);
-			my $type   = $h->{content_type};
-			my $encode = $h->{content_transfer_encoding};
+			my $x = shift(@$ary);
+			$x =~ s/[\r\n]//g;
+			if ($x ne $boundary && $x ne $b2) { next; }
+			while(@$ary) {
+				if ($ary->[0] eq '') { next; }
+				my $part_h = $self->parse_mail_header($ary, $outcode);
+				my $type   = $part_h->{content_type};
+				my $encode = $part_h->{content_transfer_encoding} =~ tr/A-Z/a-z/r;
 
-			# attachment file
-			$encode =~ tr/A-Z/a-z/;
-			if ($encode eq 'base64') {
-				$h->{filename} = 'file' . (++$count);
+				my $part = {
+					type	=> $type,
+					encode	=> $encode
+				};
+				push(@parts, $part);
 
-				# filename from Content-Disposition
-				my $x = $self->parse_header_line( $h->{content_disposition}, $code );
-				if (exists $x->{filename}) {
-					$h->{filename} = $x->{filename};
-				} else {
-					#  filename from Content-type
-					my $x = $self->parse_header_line( $type, $code );
-					if (exists $x->{name}) {
-						$h->{filename} = $x->{name};
+				if ($part_h->{content_disposition}) {
+					my $x = $self->parse_header_line( $part_h->{content_disposition}, $outcode );
+					if (exists $x->{filename}) {
+						$part->{filename} = $x->{filename};
+					} else {
+						#  filename from Content-type
+						my $x = $self->parse_header_line( $type, $outcode );
+						if (exists $x->{name}) {
+							$part->{filename} = $x->{name};
+						}
 					}
 				}
-				$h->{data} = $self->read_until_boundary($ary, $boundary, 1);
-				push(@attaches, $h);
-
-				$self->{DEBUG} && $ROBJ->debug("Attachement file: $h->{filename} ",length($h->{data})," byte");
-
-			# text mail or html mail
-			} elsif (($encode eq '' || $encode eq '7bit' || $encode eq '8bit' || $encode =~ /quoted-printable/)
-			      && ($type =~ m|^(text)/plain;| || $type =~ m|^text/(html);|)) {
-				my $ctype = $1;
-				my $v = $self->read_until_boundary($ary, $boundary);
-				$v = $self->decode_quoted_printable($encode, $v);
-
-				# convert character code
-				my $mail_code = 'UTF-8';
-				if ($type =~ /;\s*charset="(.*?)"/i || $type =~ /;\s*charset=([^\s;]*)/i) { $mail_code=$1; }
-				Encode::from_to($v, $mail_code, $code);
-				$v = $self->decode_rfc3676( $type, $v );
-				$mail->{$ctype} = $v;
-
-				$self->{DEBUG} && $ROBJ->debug("$ctype=$v");
+				my $data = $self->read_until_boundary($ary, $boundary);
+				$part->{data} = $self->decode_part_body($data, $type, $encode);
 			}
 		}
+
+	} else {
+		#---------------------------------------------------------------
+		# simple
+		#---------------------------------------------------------------
+		$self->{DEBUG} && $ROBJ->debug("*** mail is simple ***");
+
+		my $text = join('', @$ary);
+		push(@parts, {
+			main	=> 1,
+			type	=> $mail_type,
+			encode	=> $mail_code,
+			data	=> $self->decode_part_body($text, $mail_type, $mail_code)
+		});
 	}
+
+	foreach(@parts) {
+		$_->{size} = length($_->{data});
+		$self->{DEBUG} && $ROBJ->debug("Part: $_->{type} $_->{encode} $_->{filename} $_->{size} byte");
+	}
+
+	#-----------------------------------------------------------------------
+	# Choice the main text
+	#-----------------------------------------------------------------------
+	my @attaches;
+	$mail->{attaches} = \@attaches;
+
+	foreach(@parts) {
+		if (exists($_->{filename})) {
+			push(@attaches, $_);
+			next;
+		}
+		if (!exists($mail->{body}) && ($_->{main} || $_->{type} =~ m|text/plain|)) {
+			$mail->{body} = $_->{data};
+
+			my $type = $_->{type};
+			my $code = 'UTF-8';
+			if ($type =~ /;\s*charset="(.*?)"/i || $type =~ /;\s*charset=([^\s;]*)/i) { $code=$1; }
+			Encode::from_to($mail->{body}, $code, $outcode);
+			next;
+		}
+		if (!exists($mail->{html}) && $_->{type} =~ m|text/html|) {
+			$mail->{html} = $_->{data};
+			next;
+		}
+		push(@attaches, $_);
+	}
+
 	return $mail;
 }
 
@@ -129,17 +149,28 @@ sub parse {
 # read until mutipart boundary
 #-----------------------------------------------------------
 sub read_until_boundary {
-	my ($self, $ary, $boundary, $base64) = @_;
+	my ($self, $ary, $boundary, $encode) = @_;
 	my $b2 = "$boundary--";
 	my $data;
 	while(@$ary) {
 		my $x = shift(@$ary);
 		$x =~ s/[\r\n]//g;
 		if ($x eq $boundary || $x eq $b2) { last; }
-		if ($base64) { $data .= $self->base64decode($x); next; }
 		$data .= "$x\n";
 	}
 	return $data;
+}
+
+sub decode_part_body {
+	my ($self, $data, $type, $encode) = @_;
+
+	if ($encode eq 'base64') {
+		return $self->base64decode($data);
+	}
+	if ($encode eq 'quoted-printable') {
+		return $self->decode_quoted_printable($data);
+	}
+	return $self->decode_rfc3676($data, $type);
 }
 
 #-------------------------------------------------------------------------------
@@ -164,7 +195,7 @@ sub parse_mail_header {
 		} 
 		if (defined $n) {
 			if ($code) {
-				$v = $self->mime_decode_line($v, $code);
+				$v = $self->decode_header_line($v, $code);
 			}
 			# save
 			push(@lines, "$n: $v\n");
@@ -233,7 +264,7 @@ my @base64ary = (
 #-------------------------------------------------------------------------------
 # decode for one line
 #-------------------------------------------------------------------------------
-sub mime_decode_line {
+sub decode_header_line {
 	my $self = shift;
 	my $line = shift;
 	my $code = shift;
@@ -309,7 +340,7 @@ sub parse_header_line {		# RFC2231
 			}
 			$h{$key} = $val;
 		} else {
-			$h{$_} = $self->mime_decode_line($val, $code);
+			$h{$_} = $self->decode_header_line($val, $code);
 		}
 	}
 	return \%h;
@@ -317,8 +348,8 @@ sub parse_header_line {		# RFC2231
 
 sub decode_rfc3676 {		# RFC2231
 	my $self = shift;
-	my $type = shift;
 	my $text = shift;
+	my $type = shift;
 
 	if ($type !~ m|text/plain|i || $type !~ /format=flowed/i) {
 		return $text;
@@ -334,12 +365,7 @@ sub decode_rfc3676 {		# RFC2231
 
 sub decode_quoted_printable {	# Content-Transfer-Encoding: quoted-printable
 	my $self = shift;
-	my $ct_enc = shift;
 	my $text = shift;
-
-	if ($ct_enc !~ m|quoted-printable|i) {
-		return $text;
-	}
 	$text =~ s/=([0-9A-Fa-f][0-9A-Fa-f])/chr(hex($1))/eg;
 	$text =~ s/=\r?\n//sg;
 	return $text;
@@ -352,6 +378,7 @@ sub base64decode {	# 'normal' or 'URL safe'
 	my $ret;
 	my $buf;
 	my $f;
+	$str =~ s/\s//g;
 	$str =~ s/[=\.]+$//;
 	for(my $i=0; $i<length($str); $i+=4) {
 		$buf  = ($buf<<6) + $base64ary[ ord(substr($str,$i  ,1)) ];
