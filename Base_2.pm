@@ -83,6 +83,9 @@ sub _read_form {
 	if ($self->{Form}) { return $self->{Form}; }
 
 	my $opt = shift || ($self->{FormOpt} ||= $self->{FormOptFunc} && $self->execute($self->{FormOptFunc}));
+	if ($self->{POST_ERR}) {
+		return $self->_read_form_exit($self->{POST_ERR});
+	}
 
 	my $ctype = $ENV{CONTENT_TYPE};
 	my $multi = $ctype =~ m|^multipart/form-data;|;
@@ -118,7 +121,7 @@ sub _read_form {
 
 sub _read_form_exit {
 	my $self = shift;
-	$self->{POST_ERR} = 1;
+	$self->{POST_ERR} ||= 1;
 	$self->msg(@_);
 
 	my $size = $ENV{CONTENT_LENGTH};
