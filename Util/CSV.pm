@@ -4,7 +4,7 @@ use strict;
 #							(C)2022 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Util::CSV;
-our $VERSION = '1.00';
+our $VERSION = '1.10';
 ################################################################################
 # constructor
 ################################################################################
@@ -19,7 +19,14 @@ sub new {
 sub parse {
 	my $self = ref($_[0]) eq __PACKAGE__ && shift;
 	my @ary  = split(/\r?\n/, shift);
+	my $func = shift;			# colum name replace function
 	my $head = &parse_line(shift(@ary));
+
+	if ($func) {	# colum name replace
+		foreach(@$head) {
+			$_ = &$func($_);
+		}
+	}
 
 	my @lines;
 	foreach(@ary) {
