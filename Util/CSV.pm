@@ -19,10 +19,10 @@ sub new {
 sub parse {
 	my $self = ref($_[0]) eq __PACKAGE__ && shift;
 	my @ary  = split(/\r?\n/, shift);
-	my $func = shift;			# colum name replace function
+	my $func = shift;			# column name replace function
 	my $head = &parse_line(shift(@ary));
 
-	if ($func) {	# colum name replace
+	if ($func) {
 		foreach(@$head) {
 			$_ = &$func($_);
 		}
