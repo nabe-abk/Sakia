@@ -10,6 +10,7 @@ my $LastUpdate = '2023.08.11';
 ################################################################################
 my $BASE = './';
 my $NAME;
+my $LIB_NAME;
 my $FORCE;
 my $README=1;
 
@@ -63,6 +64,8 @@ HELP
 	}
 }
 print "Sakia system initalizer - (C)$LastUpdate nabe\@abk\n\n";
+
+$LIB_NAME = $NAME =~ s/-/_/rg;
 
 ################################################################################
 # main start
@@ -118,7 +121,7 @@ print "\n";
 # copy other files
 #--------------------------------------------------------------------------------
 &make_dir ("lib/SakiaApp");
-&copy_file("app.pm",         "lib/SakiaApp/$NAME.pm");
+&copy_file("app.pm",         "lib/SakiaApp/$LIB_NAME.pm");
 &copy_file("_htaccess_deny", "lib/.htaccess");
 &copy_file("_htaccess_deny", "lib/.htaccess");
 
@@ -178,6 +181,7 @@ sub copy_file {
 	my $year  = (localtime())[5] + 1900;
 	foreach(@$lines) {
 		$_ =~ s/<\@NAME>/$NAME/g;
+		$_ =~ s/<\@LIB_NAME>/$LIB_NAME/g;
 		$_ =~ s/<\@YEAR>/$year/g;
 	}
 	$ROBJ->fwrite_lines("$TARDIR/$des", $lines);

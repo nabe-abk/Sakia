@@ -4,7 +4,7 @@ use strict;
 # <@NAME>
 #						(C)<@YEAR> AUTHOR NAME
 #-------------------------------------------------------------------------------
-package SakiaApp::<@NAME>;
+package SakiaApp::<@LIB_NAME>;
 use Sakia::AutoLoader;
 #-------------------------------------------------------------------------------
 our $VERSION = '0.01';
