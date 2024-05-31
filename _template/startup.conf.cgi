@@ -49,6 +49,7 @@
 #-------------------------------------------------------------------------------
 <$FormOptFunc = begin_func>
 	<$resolve_host()>
+#	<$ifset(ENV.HTTP_ORIGIN ne 'http://example.com', POST_ERR, 'Form Security Error')>
 
 	<$local(opt) = {}>
 	<$opt.max_size = 256K>
