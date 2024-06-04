@@ -446,7 +446,7 @@ sub preprocessor {
 					$P->{$_} = $n & $PRAGMA{$_};
 				}
 
-			} else {		# ex <$strict> <$+rm_sp_begin> <$-rm_blank>
+			} else {		# ex <$'strict'> <$'+rm_sp_begin'> <$'-rm_blank'>
 				if ($PRAGMA{$3}) {
 					$P->{$3} = $2 eq '-' ? 0 : 1;
 				} else {
