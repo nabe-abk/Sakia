@@ -5,9 +5,9 @@ our $VERSION  = '1.25';
 our $SPEC_VER = '1.12';	# specification version for compatibility
 ################################################################################
 # Sakia HTTP Server
-#					Copyright (C)2019-2023 nabe@abk
+#					Copyright (C)2019-2024 nabe@abk
 ################################################################################
-# Last Update : 2023/04/09
+# Last Update : 2024/06/08
 #
 BEGIN {
 	my $path = $0;
@@ -461,9 +461,7 @@ if ($GENERATE_CONF) {
 	}
 
 	# open Browser on windows
-	if ($PORT && $IsWindows && $OPEN_BROWSER) {
-		&open_browser_on_windows();
-	}
+	&open_browser_on_windows();
 
 	# main thread
 	while(1) {
@@ -1065,7 +1063,7 @@ sub my_alarm {
 sub open_browser_on_windows {
 	if ($IsWindows && $OPEN_BROWSER) {
 		my $url = 'http://' . $ENV{SERVER_NAME} . ($PORT==80 ? '' : ":$PORT");
-		system("cmd.exe /c start $url?login_auto");
+		system("cmd.exe /c start $url/#autoopen");
 	}
 }
 
