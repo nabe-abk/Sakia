@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.12';
+our $VERSION = '3.13';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -1071,7 +1071,6 @@ sub poland_to_expression {
 	$st->{local_st} = [];		# local variables stack
 	$st->{builtin}  = {};		# used builtin functions
 
-	my %error_block;
 	my $const = $st->{const};
 
 	use constant DEBUG_CV => 0;	# convert main
@@ -1088,8 +1087,6 @@ sub poland_to_expression {
 		# special lines
 		#---------------------------------------------------------------
 		if ($line->{else} || $line->{end_code}) {
-			if ($error_block{$line->{block_end}}) { next; }
-
 			$self->pop_localvar_stack($st, $line->{else});
 			DEBUG_LV && $self->dump_localvar_stack($st, "pop");
 
@@ -1171,14 +1168,6 @@ sub poland_to_expression {
 			}
 		}
 
-		if (@err) {
-			$self->error_from($line, @err);
-			foreach(@$po) {
-				if ($_ =~ /^\x01begin\.(\d+)/) { $error_block{$1}=1; }
-			}
-			next;
-		}
-
 		#---------------------------------------------------------------
 		# local var stack process
 		#---------------------------------------------------------------
@@ -1198,6 +1187,20 @@ sub poland_to_expression {
 			}
 			$self->push_localvar_stack($st, \%local_bak, $c);
 			DEBUG_LV &&  $self->dump_localvar_stack($st, "push $c");
+		}
+
+		#---------------------------------------------------------------
+		# error handle / Must be executed after block processing!
+		#---------------------------------------------------------------
+		if (@err) {
+			$self->error_from($line, @err);
+
+			if ($line->{elsif}) {
+				$line->{out_with_code} = '} elsif(0) { ';
+			} elsif ($st->{begin_code}) {
+				$line->{out_with_code} = 'if(0) { ';
+			}
+			next;
 		}
 
 		#---------------------------------------------------------------
@@ -2130,7 +2133,7 @@ sub post_process {
 	my $prev;
 	foreach(@$lines) {
 		if ($_->{delete}) { next; }
-		if (!exists($_->{exp})) {
+		if (!exists($_->{exp}) && !exists($_->{out_with_code})) {
 			$_->{out} = exists($_->{out}) ? $_->{out} : $_->{data};
 			if (exists($prev->{out})) {
 				$prev->{out} .= $_->{out};
@@ -2175,6 +2178,9 @@ sub post_process {
 			}
 
 			push(@out, $tab . "$VAR_OUT.=$text;\n");
+			if ($_->{out_with_code}) {
+				push(@out, $tab . "$_->{out_with_code}\n");
+			}
 			next;
 		}
 		# code
