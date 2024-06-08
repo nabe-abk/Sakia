@@ -11,8 +11,9 @@
 # Directories
 #-------------------------------------------------------------------------------
 # public directory
-<$constant(script_dir) = 'js/'>
+<$constant(pub_dir)    = 'pub/'>
 <$constant(theme_dir)  = 'theme/'>
+<$constant(script_dir) = 'js/'>
 
 # private directory
 <$constant(data_dir) = 'data/'>
@@ -41,6 +42,7 @@
 <$v.title = '<@NAME>'>
 
 <$v.data_dir   = data_dir>
+<$v.pub_dir    = pub_dir>
 <$v.theme_dir  = theme_dir>
 <$v.script_dir = script_dir>
 
