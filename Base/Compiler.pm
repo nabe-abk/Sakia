@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.13';
+our $VERSION = '3.14';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -141,7 +141,8 @@ my %InlineFuncs = (
 	file_writable=>	{ f=>'-w #0', arg=>1, min=>'-w', max=>'-w' },
 	file_size =>	{ f=>'-s #0', arg=>1, min=>'-s', max=>'-s' },
 
-	sref	=> { f=>'\(my $Z = #0)', arg=>1, min=>'=', max=>'='},
+	new_hash=> { f=>'{ _order=>[] }', arg=>0 },
+	sref	=> { f=>'\(my $Z = #0)',  arg=>1 },
 	weaken	=> { f=>'Scalar::Util::weaken(#0)', arg=>1 }
 );
 
