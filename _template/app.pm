@@ -36,6 +36,13 @@ sub main {
 	#-------------------------------------------------------------
 	# POST action
 	#-------------------------------------------------------------
+	if ($ROBJ->{POST_ERR}) {
+		$self->json_mode();
+		return $self->output_html( $ROBJ->generate_json({
+			ret => -1,
+			msg => $ROBJ->clear_msg("\n")
+		}));
+	}
 	if ($ROBJ->{POST}) {
 		my $action = $ROBJ->{Form}->{action};
 		if ($action =~ /^(?:\w+_)?_ajax_\w+$/) {
@@ -136,7 +143,7 @@ sub do_ajax_function {
 	my $ROBJ = $self->{ROBJ};
 
 	# if ($func ne '_ajax_login' && !$ROBJ->{Auth}->{ok}) {
-	#	return [ -99.1, 'require login' ];
+	#	return [ -991, 'require login' ];
 	# }
 
 	my $r;
@@ -144,7 +151,7 @@ sub do_ajax_function {
 	if (!$@) { return $r; }
 
 	# eval error
-	return [ -99.9, $@ ];
+	return [ -999, $@ ];
 }
 
 #-------------------------------------------------------------------------------
