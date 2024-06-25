@@ -87,7 +87,7 @@ sub parse {
 				if (!exists($_->{$t})) { next; }
 				$msg .= " $t=$_->{$t}";
 			}
-			$ROBJ->debug("Part:$msg");
+			$ROBJ->debug("Part:$msg");	# debug-safe
 		}
 	}
 
