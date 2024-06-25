@@ -74,7 +74,9 @@ sub reconnect {
 	if (!$force && $dbh->ping()) {
 		return;
 	}
+	
 	$self->{dbh} = $dbh->clone();
+	$self->{dbh}->{pg_expand_array} = $dbh->{pg_expand_array};
 }
 
 ################################################################################
