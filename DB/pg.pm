@@ -37,9 +37,6 @@ sub new {
 	if (!$dbh) { die "Database '$database' Connection faild"; }
 	$self->{dbh} = $dbh;
 
-	# 初期設定
-	$dbh->{pg_expand_array}=0;
-
 	# UTF8判定 // DBD::Pg bug対策
 	my $ver = $DBD::Pg::VERSION;
 	if ($ver =~ /^3\.(.*)/) {
@@ -74,9 +71,7 @@ sub reconnect {
 	if (!$force && $dbh->ping()) {
 		return;
 	}
-	
 	$self->{dbh} = $dbh->clone();
-	$self->{dbh}->{pg_expand_array} = $dbh->{pg_expand_array};
 }
 
 ################################################################################
