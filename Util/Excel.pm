@@ -1,12 +1,12 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Excel file manipulation
-#							(C)2020-2023 nabe@abk
+#							(C)2020-2024 nabe@abk
 #-------------------------------------------------------------------------------
 # Use commands: rm zip unzip and shell
 #
 package Sakia::Util::Excel;
-our $VERSION = '1.26';
+our $VERSION = '1.27';
 #-------------------------------------------------------------------------------
 use Fcntl;
 ## mskip-all: for message checker
@@ -313,27 +313,10 @@ sub rewrite_xml {
 	}
 
 	#-------------------------------------------------------------
-	# _rels/workbook.xml.rels
-	#-------------------------------------------------------------
-	{
-		my $data = $self->{wb_rels_header};
-
-		foreach my $rel (values(%$rels)) {
-			my $at = '';
-			foreach(keys(%$rel)) {
-				$at .= " $_=\"$rel->{$_}\"";
-			}
-			$data .= "<Relationship$at/>";
-		}
-		$data .= $self->{wb_rels_footer};
-		$self->write_file($self->{file_wb_rels}, $data);
-	}
-
-	#-------------------------------------------------------------
 	# calcChain.xml
 	#-------------------------------------------------------------
 	if ($self->{calcChain_header}) {
-		my $data = $self->{calcChain_header};
+		my $data = '';
 
 		foreach my $sh (@$sheets) {
 			my $cc = $sh->{cc};
@@ -348,8 +331,15 @@ sub rewrite_xml {
 				$data .= "<c$at/>";
 			}
 		}
-		$data .= $self->{calcChain_footer};
-		$self->write_file($self->{file_calcChain}, $data);
+		if ($data ne '') {
+			$data = $self->{calcChain_header} . $data . $self->{calcChain_footer};
+			$self->write_file($self->{file_calcChain}, $data);
+		} else {
+			unlink($self->{file_calcChain});
+			# delete calc chain link
+			my ($id) = grep { $rels->{$_}->{Target} eq 'calcChain.xml' } keys(%$rels);
+			delete $rels->{$id};
+		}
 	}
 	#-------------------------------------------------------------
 	# sharedStrings.xml
@@ -362,6 +352,23 @@ sub rewrite_xml {
 		$self->{DEBUG} && print "Write: $self->{file_strings}, " . ($#strings+1) . " strings\n";
 
 		$self->write_file($self->{file_strings}, $data);
+	}
+
+	#-------------------------------------------------------------
+	# _rels/workbook.xml.rels
+	#-------------------------------------------------------------
+	{
+		my $data = $self->{wb_rels_header};
+
+		foreach my $rel (values(%$rels)) {
+			my $at = '';
+			foreach(keys(%$rel)) {
+				$at .= " $_=\"$rel->{$_}\"";
+			}
+			$data .= "<Relationship$at/>";
+		}
+		$data .= $self->{wb_rels_footer};
+		$self->write_file($self->{file_wb_rels}, $data);
 	}
 }
 
