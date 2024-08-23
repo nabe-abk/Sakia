@@ -136,7 +136,7 @@ sub auto_login {
 	$self->{id}   = "root*";
 	$self->{name} = "root*";
 	$self->{auto} = 1;
-	$self->{isadmin} = 1;	# 管理者権限
+	$self->{isadmin} = 1;
 	$self->{sid_pkey}= 0;
 	$self->{ext}  = {};
 }
