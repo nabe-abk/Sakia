@@ -171,7 +171,7 @@ sub load_logs {
 	}
 	if ($query->{q}) {
 		$h{search_words} = [ split(/\s+/, $query->{q}) ];
-		$h{search_cols}  = [ 'ip' ];
+		$h{search_cols}  = [ 'ip', 'host' ];
 		$h{search_equal} = [ 'id' ];
 	}
 
