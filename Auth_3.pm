@@ -165,8 +165,14 @@ sub load_logs {
 		limit	=> int($query->{limit}) || 100,
 		sort	=> $query->{sort} || '-tm'
 	);
+
 	if ($query->{id}) {
 		$h{match}->{id} = $query->{id};
+	}
+	if ($query->{q}) {
+		$h{search_words} = [ split(/\s+/, $query->{q}) ];
+		$h{search_cols}  = [ 'ip' ];
+		$h{search_equal} = [ 'id' ];
 	}
 
 	my $y = int($query->{year});
