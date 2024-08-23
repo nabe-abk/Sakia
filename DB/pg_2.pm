@@ -39,7 +39,6 @@ sub insert {
 	}
 
 	# SQL 発行
-	$self->utf8_on(\@ary);
 	my $sql = "INSERT INTO $table($cols) VALUES($vals)";
 	my $sth = $dbh->prepare($sql);
 	$self->debug($sql, \@ary);	## safe
@@ -132,7 +131,6 @@ sub update_match {
 	my $where = $self->generate_where(\@ary, @_);
 
 	# SQL 発行
-	$self->utf8_on(\@ary);
 	my $sql = "UPDATE $table SET $cols$where";
 	my $sth = $dbh->prepare($sql);
 	$self->debug($sql, \@ary);	## safe
@@ -160,7 +158,6 @@ sub delete_match {
 	my $where = $self->generate_where(\@ary, @_);
 
 	# SQL 発行
-	$self->utf8_on(\@ary);
 	my $sql = "DELETE FROM $table$where";
 	my $sth = $dbh->prepare($sql);
 	$self->debug($sql, \@ary);	## safe
@@ -329,13 +326,10 @@ sub do_sql {
 	my $sql  = shift;
 	my $ROBJ = $self->{ROBJ};
 
-	my @ary = @_;
-	$self->utf8_on(\@ary);
-
 	my $dbh = $self->{dbh};
-	$self->debug($sql, \@ary);	## safe
+	$self->debug($sql, \@_);	## safe
 	my $sth = $dbh->prepare($sql);
-	$sth && $sth->execute(@ary);
+	$sth && $sth->execute(@_);
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
 		$self->error($dbh->errstr);

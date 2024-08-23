@@ -340,12 +340,10 @@ sub do_sql {
 	my $sql  = shift;
 	my $ROBJ = $self->{ROBJ};
 
-	my @ary = @_;
-
 	my $dbh = $self->{dbh};
-	$self->debug($sql, \@ary);	## safe
+	$self->debug($sql, \@_);	## safe
 	my $sth = $dbh->prepare($sql);
-	$sth && $sth->execute(@ary);
+	$sth && $sth->execute(@_);
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
 		$self->error($dbh->errstr);
