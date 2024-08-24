@@ -106,36 +106,44 @@ sub check_cmd {
 sub dump {
 	my $self = shift;
 	my $data = shift;
-	my $tab  = shift || '  ';
+	my $tab  = shift || '    ';
 	my $br   = shift || "\n";
-	my $sp   = shift || '';
-	my $ref  = ref($data);
+	my $indent = shift || '';
+	my $safety = shift || {};
 
-	my $is_array = $ref eq 'ARRAY';
-	my $is_hash  = !$is_array && ($ref eq 'HASH' || Scalar::Util::blessed($data));
-
-	if (!$is_array && !$is_hash) {
-		return $sp . $data . $br;
+	my $ref = $self->get_ref_type($data);
+	if ($ref eq 'SCALAR') {
+		return "\\\"$$data\"";
 	}
+	if (!$ref) {
+		return $data . $br;
+	}
+	my $is_array = $ref eq 'ARRAY';
 
-	my $ret = '';
-	foreach($is_array ? @$data : sort(keys(%$data))) {
-		my $k = $is_array ? '' : "$_=";
+	if ($safety->{$data}) { return '***circular reference***'; }
+	$safety->{$data}=1;
+
+	my $ret = $is_array ? '[' : '{';
+	my @ary = $is_array ? @$data : sort(keys(%$data));
+	if (@ary) { $ret .= $br; }
+	foreach(@ary) {
+		my $k = $is_array ? '' : "$_ => ";
 		my $v = $is_array ? $_ : $data->{$_};
 
-		if (ref($v) eq 'ARRAY') {
-			my $x = $self->dump($v, $tab, $br, "$tab$sp");
-			$ret .= $x eq '' ? "$sp${k}[]$br" : "$sp${k}[$br$x$sp]$br";
-			next;
+		if (ref($v)) {
+			$v = $self->dump($v, $tab, $br, "$tab$indent", $safety);
 		}
-		if (ref($v) eq 'HASH' || Scalar::Util::blessed($v)) {
-			my $x = $self->dump($v, $tab, $br, "$tab$sp");
-			$ret .= $x eq '' ? "$sp${k}{}$br" : "$sp${k}{$br$x$sp}$br";
-			next;
-		}
-		$ret .= "$sp$k$v$br";
+		$ret .= "$indent$tab$k$v$br";
 	}
-	return $ret;
+	return $ret . (@ary ? $indent : '') . ($is_array ? ']' : '}');
+}
+
+sub get_ref_type {
+	my $self = shift;
+	my $v    = shift;
+	my $ref  = ref($v);
+	if ($ref && $v =~ /=/) { return Scalar::Util::reftype($v); }
+	return $ref;
 }
 
 1;
