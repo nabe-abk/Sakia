@@ -8,7 +8,7 @@ use Sakia::AutoLoader;
 use Sakia::DB::share;
 use DBI ();
 #-------------------------------------------------------------------------------
-our $VERSION = '1.33';
+our $VERSION = '1.40';
 my %DB_attr = (AutoCommit => 1, RaiseError => 0, PrintError => 0, PrintWarn => 0, pg_enable_utf8 => 0);
 #-------------------------------------------------------------------------------
 # check UTF8 bug
@@ -22,41 +22,41 @@ BEGIN {
 }
 
 ################################################################################
-# ■基本処理
+# constructor
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●【コンストラクタ】
-#-------------------------------------------------------------------------------
 sub new {
 	my $class = shift;
-	my ($ROBJ, $database, $username, $password, $self) = @_;
-	$self ||= {};
-	bless($self, $class);
-	$self->{ROBJ} = $ROBJ;	# root object save
+	my ($ROBJ, $db, $id, $pass, $opt) = @_;
+	my $self = bless({
+		%{ $opt || {}},		# options
+		ROBJ	=> $ROBJ,
 
-	# 初期設定
-	$self->{__FINISH} = 1;
-	$self->{DBMS}  	  = 'PostgreSQL';
-	$self->{db_id}    = "pg.$database.";
-	$self->{exist_tables_cache} = {};
+		__FINISH=> 1,
+		DBMS	=> 'PostgreSQL',
+		ID	=> "pg.$db",
 
-	# 接続
-	my $connect = $self->{Pool} ? 'connect_cached' : 'connect';
-	my $dbh = DBI->$connect("DBI:Pg:$database", $username, $password, \%DB_attr);
-	if (!$dbh) { die "Database '$database' Connection faild"; }
+		exists_table_cache => {}
+	}, $class);
+
+	# connect
+	my $con = $self->{Pool} ? 'connect_cached' : 'connect';
+	my $dbh = DBI->$con("DBI:Pg:$db", $id, $pass, \%DB_attr);
+	if (!$dbh) { die "Database '$db' Connection faild"; }
+
 	$self->{dbh} = $dbh;
-
 	return $self;
 }
+
 #-------------------------------------------------------------------------------
-# ●デストラクタ代わり
+# destructor
 #-------------------------------------------------------------------------------
 sub FINISH {
 	my $self = shift;
 	if ($self->{begin}) { $self->rollback(); }
 }
+
 #-------------------------------------------------------------------------------
-# ●切断/再接続
+# reconnect
 #-------------------------------------------------------------------------------
 sub disconnect {
 	my $self = shift;
@@ -74,65 +74,59 @@ sub reconnect {
 }
 
 ################################################################################
-# ■テーブルの操作
+# find table
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●テーブルの存在確認
-#-------------------------------------------------------------------------------
 sub find_table {
 	my ($self, $table) = @_;
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	# キャッシュの確認
-	my $cache    = $self->{exist_tables_cache};
+	my $cache    = $self->{exists_table_cache};
 	my $cache_id = $self->{db_id} . $table;
 	if ($cache->{$cache_id}) { return $cache->{$cache_id}; }
 
-	# テーブルからの情報取得
 	my $dbh = $self->{dbh};
 	my $sql = "SELECT tablename FROM pg_tables WHERE tablename=? LIMIT 1";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql);	## safe
+	$self->trace($sql);
 	$sth && $sth->execute($table);
 
 	if (!$sth || !$sth->rows || $dbh->err) { return 0; }	# error
-	return ($cache->{$cache_id} = 1);	# found
+	return ($cache->{$cache_id} = 1);			# found
 }
 
 ################################################################################
-# ■データの検索
+# select
 ################################################################################
 sub select {
 	my ($self, $table, $h) = @_;
 	my $dbh  = $self->{dbh};
 	my $ROBJ = $self->{ROBJ};
-	$table =~ s/\W//g;
-
-	local($self->{no_error}) = $h->{no_error};
 
 	#-----------------------------------------
-	# マッチング条件の処理
+	# parse
 	#-----------------------------------------
-	my ($where, $ary) = $self->generate_select_where($h);
+	my ($table, $as)   = $self->parse_table_name($table);
+	my ($ljoin, $jcol) = $self->generate_left_join($h);
+	my ($where, $ary)  = $self->generate_select_where($h);
+	if ($ljoin && $as eq '') { $as=$table; }
+	my $tname = $as ? "$as." : '';
 
 	#-----------------------------------------
-	# SQLを構成
+	# select cols
 	#-----------------------------------------
-	# 取得するカラム
-	my $cols = "*";
-	my $select_cols = (!exists$h->{cols} || ref($h->{cols})) ? $h->{cols} : [ $h->{cols} ];
-	if (ref($select_cols)) {
-		foreach(@$select_cols) { $_ =~ s/\W//g; }
-		$cols = join(',', @$select_cols);
+	my $cols = $tname . '*';
+	if ($h->{cols}) {
+		my $x = ref($h->{cols}) ? $h->{cols} : [ $h->{cols} ];
+		$cols = join(',', map { $tname . ($_ =~ s/\W//rg) } @$x);
 	}
-	# SQL
-	my $sql = "SELECT $cols FROM $table$where";
 
 	#-----------------------------------------
-	# ソート処理
+	# make SQL
 	#-----------------------------------------
-	$sql .= $self->generate_order_by($h);
+	my $from = $table . $ljoin;
+	my $sql  = "SELECT $cols$jcol FROM $from$where"
+		 . $self->generate_order_by($h);
 
 	#-----------------------------------------
 	# limit and offset
@@ -144,10 +138,10 @@ sub select {
 	if ($limit ne '') { $sql .= ' LIMIT '  . $limit;  }
 
 	#-----------------------------------------
-	# Do SQL
+	# execute
 	#-----------------------------------------
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql, $ary);	## safe
+	$self->trace($sql, $ary);
 	$sth && $sth->execute(@$ary);
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
@@ -159,13 +153,13 @@ sub select {
 	if (!wantarray) { return $ret; }
 
 	#-----------------------------------------
-	# 該当件数の取得
+	# require hits
 	#-----------------------------------------
 	my $hits = $#$ret+1;
 	if ($limit ne '' && $limit <= $hits) {
-		my $sql = "SELECT count(*) FROM $table$where";
+		my $sql = "SELECT count(*) FROM $from$where";
 		my $sth = $dbh->prepare($sql);
-		$self->debug($sql, $ary);	## safe
+		$self->trace($sql, $ary);
 		$sth && $sth->execute(@$ary);
 		if (!$sth || $dbh->err) {
 			$self->error($sql);
@@ -178,12 +172,24 @@ sub select {
 	return ($ret,$hits);
 }
 
-
 ################################################################################
-# ■サブルーチン
+# subrotine for select
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●whereの生成（外部から参照される）
+# check select table name
+#-------------------------------------------------------------------------------
+sub parse_table_name {
+	my $self = shift;
+	my $table= shift;
+	if ($table =~ /^(\w+) +(\w+)$/) {
+		return ("$1 as $2", $2);
+	}
+	$table =~ s/\W//g;
+	return ($table, '');
+}
+
+#-------------------------------------------------------------------------------
+# generate where // called from outside the module
 #-------------------------------------------------------------------------------
 sub generate_select_where {
 	my ($self, $h) = @_;
@@ -207,7 +213,7 @@ sub generate_select_where {
 			return;
 		}
 		#-----------------------------------------------------
-		# 値が配列のとき
+		# $v is array ref
 		#-----------------------------------------------------
 		if (!@$v) {
 			$where .= $not ? '' : ' AND false';
@@ -308,11 +314,12 @@ sub generate_select_where {
 			$where .= &$search($_, ' is not true');
 		}
 	}
-	if ($h->{RDB_where} ne '') { # RDBMS専用、where直指定
+
+	if ($h->{RDB_where} ne '') {		# RDBMS where
 		my $add = $h->{RDB_where};
 		$add =~ s/[\\;\x80-\xff]//g;
-		my $c = ($add =~ tr/'/'/);	# 'の数を数える
-		if ($c & 1)	{		# 奇数ならすべて除去
+		my $c = ($add =~ tr/'/'/);	# count "'"
+		if ($c & 1)	{		# if odd then all delete
 			$add =~ s/'//g;
 		}
 		$where .= " AND ($add)";
@@ -327,14 +334,15 @@ sub generate_select_where {
 }
 
 #-------------------------------------------------------------------------------
-# ●ORDER BYの生成
+# generate ORDER BY
 #-------------------------------------------------------------------------------
 sub generate_order_by {
 	my ($self, $h) = @_;
 	my $sort = ref($h->{sort}    ) ? $h->{sort}     : [ $h->{sort}     ];
 	my $rev  = ref($h->{sort_rev}) ? $h->{sort_rev} : [ $h->{sort_rev} ];
+
 	my $sql='';
-	if ($h->{RDB_order} ne '') {	# RDBMS専用、order直指定
+	if ($h->{RDB_order} ne '') {
 		$sql .= ' ' . $h->{RDB_order} . ',';
 	}
 	foreach(0..$#$sort) {
@@ -349,14 +357,35 @@ sub generate_order_by {
 }
 
 #-------------------------------------------------------------------------------
-# ●エラーフック
+# generate LEFT JOIN
 #-------------------------------------------------------------------------------
-# $self->error in DB_share.pm から呼ばれる
-sub error_hook {
-	my $self = shift;
-	if ($self->{begin}) {
-		$self->{begin}=-1;	# error
+sub generate_left_join {
+	my ($self, $h) = @_;
+
+	my $lj = $h->{ljoin};
+	if (!$lj) { return ('', ''); }
+	my $ary = ref($lj) eq 'ARRAY' ? $lj : [ $lj ];
+
+	my $sql='';
+	my @cols;
+	foreach(@$ary) {
+		my ($tbl,$as) = $self->parse_table_name($_->{table});
+		my $l   = $_->{left}  =~ s/[^\w\.]//rg;
+		my $r   = $_->{right} =~ s/[^\w\.]//rg;
+		if (!$tbl) { next; }
+
+		my $c = $_->{cols};
+		if ($c) {
+			$as ||= $tbl;
+			push(@cols, map { $_ =~ /^(\w+) +(\w+)$/ ? "$as.$1 as $2" : "$as." . ($_ =~ s/\W//rg) } @$c);
+		}
+		if ($as ne '') { $as = " as $as"; }
+		my $on = ($l && $r) ? "$l=$r" : 'false';
+
+		$sql .= " LEFT JOIN $tbl ON $on";
 	}
+	my $cols = @cols ? join(', ', '', @cols) : '';
+	return ($sql, $cols);
 }
 
 1;

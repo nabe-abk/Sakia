@@ -1,24 +1,21 @@
 use strict;
 #-------------------------------------------------------------------------------
-# データベースモジュール、共通ルーチン
-#							(C)2020-2022 nabe@abk
+# common routine for database module
+#							(C)2020-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::DB::share;
-our $VERSION = '1.11';
+our $VERSION = '1.20';
 
 use Exporter 'import';
 our @EXPORT = qw(
 	select_match_pkey1 select_match_limit1 select_match
 	select_where_pkey1 select_where_limit1 select_where
-	set_debug debug warning error
+	set_trace trace warning error
 );
 
 ################################################################################
-# ■selectの拡張
+# Easy select functions
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●データの取得
-#-------------------------------------------------------------------------------
 sub select_match_pkey1 {
 	my $h = &select_match(@_, '*limit', 1, '*cols', 'pkey')->[0];
 	return $h && $h->{pkey};
@@ -33,14 +30,8 @@ sub select_match {
 	while(@_) {
 		my $col = shift;
 		my $val = shift;
-		if ($col eq '*limit') { $h{limit}=$val; next; }
-		if ($col eq '*cols' ) { $h{cols} =$val; next; }
-		if ($col eq '*sort' ) { $h{sort} =$val; next; }
-		if ($col eq '*no_error') { $h{no_error}=$val; next; }
-		if (ord($col) == 0x2d) {	# == '-'
-			$h{not_match}->{substr($col,1)}=$val;
-			next;
-		}
+		if (ord($col) == 0x2a) { $h{substr($col,1)}=$val; next; }		# *keyword
+		if (ord($col) == 0x2d) { $h{not_match}->{substr($col,1)}=$val; next; }	# -colname
 		# default
 		$h{match}->{$col}=$val;
 	}
@@ -48,7 +39,7 @@ sub select_match {
 }
 
 #-------------------------------------------------------------------------------
-# ●for RDB
+# for RDB
 #-------------------------------------------------------------------------------
 sub select_where_pkey1 {
 	my $self  = shift;
@@ -71,36 +62,34 @@ sub select_where {
 }
 
 ################################################################################
-# ■エラー処理
+# Error and Trace
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●デバッグ処理
-#-------------------------------------------------------------------------------
-sub set_debug {
+sub set_trace {
 	my ($self, $flag) = @_;
-	my $r = $self->{DEBUG};
-	$self->{DEBUG} = defined $flag ? $flag : 1;
+	my $r = $self->{TRACE};
+	$self->{TRACE} = defined $flag ? $flag : 1;
 	return $r;
 }
-sub debug {
+sub trace {
 	my $self = shift;
-	if (!$self->{DEBUG}) { return; }
+	if (!$self->{TRACE}) { return; }
 
 	my $sql  = shift;
 	my @ary  = @{ shift || [] };
 	my $ROBJ = $self->{ROBJ};
 
 	$sql =~ s/\?/@ary ? ($ary[0] =~ m|^\d+$| ? shift(@ary) : "'" . shift(@ary) . "'") : '?'/eg;
+	$sql =~ s/\t/    /g;
 	$ROBJ->_debug('['.$self->{DBMS}.'] '.$sql, 1);	## safe
 }
 sub error {
 	my $self = shift;
 	my $err  = shift;
 	my $ROBJ = $self->{ROBJ};
-	if ($self->can('error_hook')) {
-		$self->error_hook(@_);
+	if ($self->{begin}) {
+		$self->{begin}=-1;	# error
 	}
-	my $func = $self->{no_error} ? 'warning' : 'error';
+	my $func = $self->{ignore_error} ? 'warning' : 'error';
 	$ROBJ->$func('['.$self->{DBMS}.'] '.$err, @_);
 }
 

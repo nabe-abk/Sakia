@@ -5,10 +5,10 @@ use Fcntl;
 our $FileNameFormat;
 our %IndexCache;
 ################################################################################
-# ■データの挿入・削除
+# insert, update, delete
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●データの挿入
+# insert
 #-------------------------------------------------------------------------------
 sub insert {
 	my $self = shift;
@@ -16,41 +16,35 @@ sub insert {
 	my ($table, $h) = @_;
 	$table =~ s/\W//g;
 
-	my $db = $self->load_index($table, 1);
+	my $db = $self->load_index_for_edit($table);
 	if (!defined $db) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' table", $table);
 		return 0;
 	}
 
-	# デフォルト値の処理
-	my $default = $self->{"$table.default"};
-	my %x;
-	foreach(keys(%$default)) {
-		if (exists($h->{$_}) || $default->{$_} eq '') { next; }
-		$x{$_} = $default->{$_};
-	}
-	if (%x) {
-		# デフォルト値が必要なら元データを破壊しないためマージする
-		foreach(keys(%$h)) {
-			$x{$_} = $h->{$_};
-		}
-		$h = \%x;
-	}
-
-	# データの整合性チェック
+	# check data type
 	$h = $self->check_column_type($table, $h);
 	if (!defined $h) {
 		$self->edit_index_exit($table);
 		return 0;	# error exit
 	}
 
+	# set pkey
 	my $pkey = $h->{pkey};
-	if ($pkey<1) {	# pkeyが指定されていない
+	if (exists($h->{pkey})) {
+		# rewrite new pkey
+		if ($pkey>$self->{"$table.serial"}) {
+			$self->{"$table.serial"} = $pkey;
+		}
+	} else {	# auto pkey
 		$pkey = $h->{pkey} = ++( $self->{"$table.serial"} );	# pkey
 	}
 
-	# UNIQUEカラム制約の確認
+	# default value
+	$h = { %{$self->{"$table.default"}}, %$h };
+
+	# check UNIQUE
 	my @unique_cols = keys(%{ $self->{"$table.unique"} });
 	my $unique_hash = $self->load_unique_hash($table);
 	foreach(@unique_cols) {
@@ -62,25 +56,96 @@ sub insert {
 		return 0;
 	}
 
-	# カラム追加
-	push(@$db, $h);			# add
-	$self->add_unique_hash($table,$h);
+	# add column to $db list
+	push(@$db, $h);		# add
+	$self->add_unique_hash($table, $h);
 
-	# 保存
+	# save
 	$self->write_rowfile($table, $h);
 	my $r = $self->save_index($table);
-	if ($r) { return 0; }	# 失敗
+	if ($r) { return 0; }	# fail
 
-	# pkey書き換え
-	if ($h->{pkey}>0 && $pkey>$self->{"$table.serial"}) {
-		$self->{"$table.serial"} = $pkey;
-	}
-
-	return $pkey;		# 成功
+	return $pkey;		# success
 }
 
 #-------------------------------------------------------------------------------
-# ●データの更新
+# generate pkey
+#-------------------------------------------------------------------------------
+sub generate_pkey {
+	my ($self, $table) = @_;
+	my $ROBJ = $self->{ROBJ};
+	$table =~ s/\W//g;
+
+	# if running transaction
+	if ($self->{begin}) {
+		my $db = $self->load_index_for_edit($table);
+		if (!defined $db) {
+			$self->edit_index_exit($table);
+			$self->error("Can't find '%s' table", $table);
+			return 0;
+		}
+		return ++( $self->{"$table.serial"} )
+	}
+
+	# check
+	my $dir = $self->{dir} . $table . '/';
+	if (!-e $dir) {
+		return 0;	# not exists table
+	}
+	my $index = $dir . $self->{index_file};
+	if (!-e $index) {
+		$self->rebuild_index( $table );
+		if (!-e $index) {
+			return 0;
+		}
+	}
+
+	# lock index
+	my $fh;
+	if ( !sysopen($fh, $index, O_RDWR) ) {
+		return 0;
+	}
+	$ROBJ->write_lock($fh);
+	binmode($fh);
+
+	# read 3 lines
+	my $version = <$fh>;
+	my $random  = <$fh>;
+	my $serial  = <$fh>;
+	chop($serial);	# delete "\n"
+
+	# next value
+	my $nextval = $serial+1;
+	my $datalen = length($serial);
+	if ($datalen < length($nextval)) {
+		# Increase data size, rewrite all data
+		my $max = -s $index;
+		read($fh, my $buf, $max);
+
+		sysseek($fh, 0, 0);
+		syswrite($fh, $version . $random . "$nextval\n");
+		syswrite($fh, $buf);
+		close($fh);
+
+	} else {
+		# rewrite only 3 lines
+		my $nextval_str = substr(('0' x $datalen) . $nextval, -$datalen);
+
+		my $fail;
+		if (!sysseek($fh, length($version)+length($random), 0)) { $fail=1; }
+		if (!$fail) {
+			if (syswrite($fh, $nextval_str, $datalen) != $datalen) { $fail=1; }
+		}
+		close($fh);
+		if ($fail) { return 0; }
+	}
+
+	$self->{"$table.serial"} = $nextval;
+	return $nextval;
+}
+
+#-------------------------------------------------------------------------------
+# update
 #-------------------------------------------------------------------------------
 sub update_match {
 	my $self = shift;
@@ -89,17 +154,18 @@ sub update_match {
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	my $r = $self->load_index($table, 1);
+	my $r = $self->load_index_for_edit($table);
 	if (!defined $r) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' table", $table);
 		return 0;
 	}
 
-	# updateの条件が式のときの前処理
+	# Contains an expression in the update data
 	my %funcs;
 	foreach (keys(%$h)) {
 		if (ord($_) != 0x2a) { next; }		# "*column"
+
 		my $v=$h->{$_};
 		$v =~ s![^\w\+\-\*\/\%\(\)\|\&\~<>]!!g;
 		if ($v =~ /\w\(/) {
@@ -123,35 +189,33 @@ sub update_match {
 		$funcs{$k} = $func;
 	}
 
-	# データの整合性チェック
-	$h = $self->check_column_type($table, $h, 'update mode flag=1');
+	# check update data
+	$h = $self->check_column_type($table, $h, 'is_update');
 	if (!defined $h) {
 		$self->edit_index_exit($table);
 		return 0;	# error exit
 	}
 	delete $h->{pkey};
 
-	# マッチ条件のカラムを確認
+	# generate where
 	my ($func,$db,$in) = $self->load_and_generate_where($table, @_);
 	if (!$func) {
 		return 0;	# error exit
 	}
 
-	# 条件にマッチするカラムを書き換え
+	# rewrite matching lines
 	my @unique_cols = keys(%{ $self->{"$table.unique"} });
 	my $unique_hash = $self->load_unique_hash($table);
 	my $updates = 0;
 	my @new_db = @$db;
 	my @save_array;
 	foreach(@new_db) {
-		# マッチしない
-		if (! &$func($_, $in)) { next; }
+		if (! &$func($_, $in)) { next; }	# not match
 
-		# マッチした
 		$updates++;
-		$self->del_unique_hash($table, $_);
+		$self->delete_unique_hash($table, $_);
 
-		# 保持情報書き換え
+		# rewrite internal memory data
 		my $row = $self->read_rowfile($table, $_);
 		foreach my $k (keys(%$h)) {
 			# replace
@@ -164,36 +228,38 @@ sub update_match {
 		push(@save_array, $row);
 		$_ = $row;
 
-		# UNIQUE制約の確認
+		# check UNIQUE
 		foreach my $col (@unique_cols) {
 			my $v = $row->{$col};
 			if ($v eq '' || !exists $unique_hash->{$col}->{$v}) { next; }
-			# 重複あり
+
+			# found a duplicate
 			$self->edit_index_exit($table);
 			$self->clear_unique_cache($table);
 			$self->error("On '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $col, $_->{$col});
 			return 0;
 		}
-		# UNIQUE hash の更新
+		# renew UNIQUE hash
 		$self->add_unique_hash($table, $row);
 	}
 
-	# update実行
+	# save
 	if ($updates) {
 		$self->{"$table.tbl"}=\@new_db;
 		foreach(@save_array) {
 			$self->write_rowfile($table, $_);
 		}
-		my $r = $self->save_index($table);	# 編集結果の保存
-		if ($r) { return 0; }	# 失敗
+		my $r = $self->save_index($table);	# save index
+		if ($r) { return 0; }			# fail
 	} elsif(! $self->{begin}) {
-		$self->edit_index_exit($table);		# 編集処理の終了
+		$self->edit_index_exit($table);		# free the lock
 	}
 
-	return $updates;	# 成功
+	return $updates;
 }
+
 #-------------------------------------------------------------------------------
-# ●データの削除
+# delete
 #-------------------------------------------------------------------------------
 sub delete_match {
 	my $self = shift;
@@ -201,147 +267,191 @@ sub delete_match {
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	my $r = $self->load_index($table, 1);
+	my $r = $self->load_index_for_edit($table);
 	if (!defined $r) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' table", $table);
 		return 0;
 	}
 
-	# マッチ条件のカラムを確認
+	# generate where
 	my ($func,$db,$in) = $self->load_and_generate_where($table, @_);
 	if (!$func) {
 		return 0;	# error exit
 	}
 
-	my @newary;
+	my @new_db;
 	my $count;
 	my $trace_ary = $self->load_trace_ary($table);
 	foreach(@$db) {
-		# マッチしない
 		if (! &$func($_, $in)) {
-			push(@newary, $_);
+			push(@new_db, $_);	# skip
 			next;
 		}
-		# 削除
+
+		# delete
 		$self->delete_rowfile($table, $_);
 		$count++;
-		# UNIQUE制約のクリア
-		$self->del_unique_hash($table, $_);
+		# update UNIQUE hash
+		$self->delete_unique_hash($table, $_);
 	}
-	$self->{"$table.tbl"}=\@newary;
+	$self->{"$table.tbl"}=\@new_db;
 	$self->save_index($table);
 
 	return $count;
 }
+
 ################################################################################
-# ■テータの集計
+# select by group
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●テーブルの情報を集計
-#-------------------------------------------------------------------------------
 sub select_by_group {
-	my ($self, $table, $h) = @_;
-	my $ROBJ = $self->{ROBJ};
-	$table =~ s/\W//g;
+	my ($self, $_tbl, $h) = @_;
 
-	# group by
-	my $group_col = $h->{group_by};
-	$group_col =~ s/\W//g;
+	my ($table, $tname) = $self->parse_table_name($_tbl);
 
-	my $sum_cols = ref($h->{sum_cols}) ? $h->{sum_cols} : ($h->{sum_cols} eq '' ? [] : [ $h->{sum_cols} ]);
-	my $max_cols = ref($h->{max_cols}) ? $h->{max_cols} : ($h->{max_cols} eq '' ? [] : [ $h->{max_cols} ]);
-	my $min_cols = ref($h->{min_cols}) ? $h->{min_cols} : ($h->{min_cols} eq '' ? [] : [ $h->{min_cols} ]);
-
-	#-----------------------------------------
-	# データロード条件
-	#-----------------------------------------
+	#-------------------------------------------------------------
+	# prepare select
+	#-------------------------------------------------------------
 	my %w = %$h;
 	delete $w{sort};
 	delete $w{sort_rev};
 	delete $w{offset};
 	delete $w{limit};
 
-	my %cols = map {$_ => 1} ('pkey',$group_col,@$sum_cols,@$max_cols,@$min_cols);
-	delete $cols{''};
-	$w{cols} = [ keys(%cols) ];
+	# group by
+	my $group_col = $h->{group_by};
+	$group_col =~ s/[^\w\.]//g;
 
-	#-----------------------------------------
-	# データのロード
-	#-----------------------------------------
-	my $db = $self->select($table, \%w);
+	my @sum_cols = ref($h->{sum_cols}) ? @{$h->{sum_cols}} : ( $h->{sum_cols} eq '' ? () : ($h->{sum_cols}) );
+	my @max_cols = ref($h->{max_cols}) ? @{$h->{max_cols}} : ( $h->{max_cols} eq '' ? () : ($h->{max_cols}) );
+	my @min_cols = ref($h->{min_cols}) ? @{$h->{min_cols}} : ( $h->{min_cols} eq '' ? () : ($h->{min_cols}) );
 
-	#-----------------------------------------
-	# グルーピングと集計処理
-	#-----------------------------------------
+	#-------------------------------------------------------------
+	# prase join
+	#-------------------------------------------------------------
+	my %jnames;
+	if ($h->{ljoin}) {
+		my @ljoin;
+		my $jary = ref($h->{ljoin}) eq 'ARRAY' ? $h->{ljoin} : [ $h->{ljoin} ];
+		foreach(@$jary) {
+			my ($jt,$jn) = $self->parse_table_name($_->{table});
+
+			my $x = { %$_, cols=>[] };
+			$jnames{$jn} = $x;
+			push(@ljoin, $x);
+		}
+		$w{ljoin}=\@ljoin;
+	}
+
+	my %colh = map {$_ => 1} ('pkey',$group_col,@sum_cols,@max_cols,@min_cols);
+	delete $colh{''};
+
+	my %c;
+	foreach(keys(%colh)) {
+		if ($_ !~ /^(\w+)\.(\w+)$/) { $c{$_}=1; next; }	# main table
+		if ($1 eq $tname)           { $c{$2}=1; next; }	# main table
+
+		my $j = $jnames{$1};
+		if (!$h) {
+			$self->error('%s column is not found', $_);
+			return [];
+		}
+		push(@{$j->{cols}}, $2);
+	}
+	$w{cols} = [ keys(%c) ];
+
+	foreach($group_col,@sum_cols,@max_cols,@min_cols) {
+		$_ =~ s/^\w+\.(\w+)$/$1/;		# delete table name
+	}
+
+	#-------------------------------------------------------------
+	# load data
+	#-------------------------------------------------------------
+	my $db = $self->select("$table $tname", \%w);
+
+	#-------------------------------------------------------------
+	# Aggregation
+	#-------------------------------------------------------------
 	my %group;
-	my %sum = map { $_=>{} } @$sum_cols;
-	my %max = map { $_=>{} } @$max_cols;
-	my %min = map { $_=>{} } @$min_cols;
+	my %sum = map { $_=>{} } @sum_cols;
+	my %max = map { $_=>{} } @max_cols;
+	my %min = map { $_=>{} } @min_cols;
 	foreach my $x (@$db) {
 		my $g = $x->{$group_col};
 		$group{ $g } ++;
 
-		foreach (@$sum_cols) {
+		foreach (@sum_cols) {
 			$sum{$_}->{$g} += $x->{$_};
 		}
-		foreach (@$max_cols) {
+		foreach (@max_cols) {
 			my $y = $max{$_}->{$g};
 			my $z = $x->{$_};
 			$max{$_}->{$g} = ($y eq '') ? $z : ($y<$z ? $z : $y);
 		}
-		foreach (@$min_cols) {
+		foreach (@min_cols) {
 			my $y = $min{$_}->{$g};
 			my $z = $x->{$_};
 			$min{$_}->{$g} = ($y eq '') ? $z : ($y>$z ? $z : $y);
 		}
 	}
 
-	#-----------------------------------------
-	# 結果を構成
-	#-----------------------------------------
-	my @newary;
+	#-------------------------------------------------------------
+	# save result
+	#-------------------------------------------------------------
+	my @ret;
 	while(my ($k,$v) = each(%group)) {
 		my %h;
 		$h{$group_col} = $k;
 		$h{_count}     = $v;
-		foreach (@$sum_cols) {
+		foreach (@sum_cols) {
 			$h{"${_}_sum"} = $sum{$_}->{$k};
 		}
-		foreach (@$max_cols) {
+		foreach (@max_cols) {
 			$h{"${_}_max"} = $max{$_}->{$k};
 		}
-		foreach (@$min_cols) {
+		foreach (@min_cols) {
 			$h{"${_}_min"} = $min{$_}->{$k};
 		}
-		push(@newary, \%h);
+		push(@ret, \%h);
 	}
 
-	#-----------------------------------------
-	# ソート処理
-	#-----------------------------------------
-	my ($sort_func, $sort) = $self->generate_sort_func($table, $h);
-	@newary = sort $sort_func @newary;
+	#-------------------------------------------------------------
+	# sort
+	#-------------------------------------------------------------
+	my $sort = $h->{sort};
+	if ($sort) {
+		my @ary = ref($sort) ? @$sort : ($sort);
+		foreach(@ary) {
+			$_ =~ s/^(-?)\w+\.(\w+)/$1/g;
+		}
 
-	return \@newary;
+		my ($sort_func, $cols) = $self->generate_sort_func($table, {
+			sort	=> \@ary,
+			sort_rev=> $h->{sort_rev}
+		});
+		@ret = sort $sort_func @ret;
+	}
+
+	return \@ret;
 }
 
 ################################################################################
-# ■サブルーチン：ユニークカラムの処理
+# UNIQUE column processing
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●unique hashのロード
+# load UNIQUE columns hash
 #-------------------------------------------------------------------------------
+#	hash->{column_name}->{value}
+#
 sub load_unique_hash {
 	my $self  = shift;
 	my $table = shift;
 
-	# キャッシュを返す
 	if ($IndexCache{"$table.unique-cache"}) {
 		return $IndexCache{"$table.unique-cache"};
 	}
 
-	# UNIQUEカラム制約の確認
+	# load UNIQUE columns
 	my @unique_cols = keys(%{ $self->{"$table.unique"} });
 	my ($line0, $line1, $line2);
 	foreach(0..$#unique_cols) {
@@ -354,7 +464,6 @@ sub load_unique_hash {
 	chop($line2);
 	my $conv_hash_func = <<FUNC;
 	sub {
-		#  54646546
 		my \$db = shift;
 		$line0
 		foreach(\@\$db) {
@@ -372,43 +481,39 @@ FUNC
 }
 
 #-------------------------------------------------------------------------------
-# ●unique hashへの追加
+# add to UNIQUE hash
 #-------------------------------------------------------------------------------
 sub add_unique_hash {
 	my $self  = shift;
 	my ($table, $h) = @_;
 
-	# hashロード
-	my $unique_hash = $IndexCache{"$table.unique-cache"};
-	if (!$unique_hash) { return; }
+	my @cols = keys(%{ $self->{"$table.unique"} });
+	if (!@cols) { return; }
 
-	# 追加処理
-	my @unique_cols = keys(%{ $self->{"$table.unique"} });
-	foreach(@unique_cols) {
-		$unique_hash->{ $_ }->{ $h->{$_} } = 1;
+	my $uh = $self->load_unique_hash($table);
+	foreach(@cols) {
+		$uh->{ $_ }->{ $h->{$_} } = 1;
 	}
 }
 
 #-------------------------------------------------------------------------------
-# ●unique hashの削除
+# delete from UNIQUE hash
 #-------------------------------------------------------------------------------
-sub del_unique_hash {
+sub delete_unique_hash {
 	my $self  = shift;
 	my ($table, $h) = @_;
 
-	# hashロード
-	my $unique_hash = $IndexCache{"$table.unique-cache"};
-	if (!$unique_hash) { return; }
+	my @cols = keys(%{ $self->{"$table.unique"} });
+	if (!@cols) { return; }
 
-	# 削除処理
-	my @unique_cols = keys(%{ $self->{"$table.unique"} });
-	foreach(@unique_cols) {
-		delete $unique_hash->{ $_ }->{ $h->{$_} };
+	my $uh = $self->load_unique_hash($table);
+	foreach(@cols) {
+		delete $uh->{ $_ }->{ $h->{$_} };
 	}
 }
 
 #-------------------------------------------------------------------------------
-# ●unique hash cacheのクリア
+# clear UNIQUE hash's cache
 #-------------------------------------------------------------------------------
 sub clear_unique_cache {
 	my ($self, $table) = @_;
@@ -416,10 +521,10 @@ sub clear_unique_cache {
 }
 
 ################################################################################
-# ■トランザクション
+# transaction
 ################################################################################
-# 大量の insert/update を高速化する目的で実装されている。
-# ※insert/update/delete のみ対応。
+# Only supported: insert/update/delete
+#
 sub begin {
 	my $self = shift;
 	if ($self->{begin}) {
@@ -437,13 +542,14 @@ sub rollback {
 		return ;
 	}
 	$self->{begin} = 0;
-	# 編集破棄
+
+	# do rollback
 	my $trans = $self->{transaction};
 	foreach(keys(%$trans)) {
 		$self->edit_index_exit($_);
 		$self->clear_cache($_);
 
-		# トランザクションlock を解く
+		# free transaction lock
 		close($self->{"$_.lock-tr"});
 		delete $self->{"$_.lock-tr"};
 	}
@@ -454,29 +560,30 @@ sub rollback {
 sub commit {
 	my $self = shift;
 	my $ROBJ = $self->{ROBJ};
-	if ($self->{begin}<0) {	# 途中でエラーがあった
+	if ($self->{begin}<0) {		# error occurred
 		return $self->rollback();
 	}
-	$self->{begin} = 0;
+	$self->{begin} = 0;		# for save_index()
 
-	# 編集の書き込み
+	# write internal data to file
 	my $trans = $self->{transaction};
 	foreach my $table (keys(%$trans)) {
-		# トランザクションを後追い処理
+		# update information for the specified table
 		my $trace = $self->load_trace_ary($table);
 		my %write;
 		my %del;
 		foreach(@$trace) {
-			if (ref($_)) { # write
+			if (ref($_)) { # update
 				my $pkey = $_->{pkey};
 				$write{$pkey}=$_;
 				delete $del{$pkey};
+				next;
 			}
 			# del
 			$del{$_}=1;
 			delete $write{$_};
 		}
-		# 書き込み処理
+		# write
 		foreach(values(%write)) {
 			$self->write_rowfile($table, $_);
 		}
@@ -489,7 +596,7 @@ sub commit {
 		}
 		$self->save_index($table);
 
-		# トランザクションlock を解く
+		# free table lock
 		if ($self->{"$table.lock-tr"}) {
 			close ($self->{"$table.lock-tr"});
 			delete $self->{"$table.lock-tr"};
@@ -499,13 +606,14 @@ sub commit {
 	$self->{trace}={};
 	return 0;
 }
+
 #-------------------------------------------------------------------------------
-# ●トランザクショントレース
+# load table's transaction data
 #-------------------------------------------------------------------------------
 sub load_trace_ary {
 	my ($self, $table) = @_;
 
-	# トランザクションでない
+	# check transaction
 	if (! $self->{transaction}->{$table}) { return '[load_trace_ary] error'; }
 
 	if ($self->{trace}->{$table}) {
@@ -513,41 +621,55 @@ sub load_trace_ary {
 	}
 	return ($self->{trace}->{$table} = []);
 }
+
 ################################################################################
-# ■update/検索関連サブルーチン
+# Check column data type for insert(), update_match()
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●columnの型/not nullチェック
-#-------------------------------------------------------------------------------
 sub check_column_type {
 	my ($self, $table, $h, $is_update) = @_;
 	my $ROBJ = $self->{ROBJ};
 	my $cols       = $self->{"$table.cols"};
+	my $str_cols   = $self->{"$table.str"};
 	my $int_cols   = $self->{"$table.int"};
 	my $float_cols = $self->{"$table.float"};
 	my $flag_cols  = $self->{"$table.flag"};
 
-	# 存在するカラム名をコピー
+	# check columns
 	my %new_hash;
 	foreach (keys(%$h)) {
 		if (! $cols->{$_}) {
 			$self->error("On '%s' table, not exists '%s' column", $table, $_);
-			return undef;
+			return;
 		}
-		# 型の適用
-		if ($h->{$_} eq '') {			# nullデータはそのまま
-			$new_hash{$_} = undef;
+		my $v = $h->{$_};
+		if ($v eq '') {			# keep null
+			$new_hash{$_} = '';
+
 		} elsif ($int_cols->{$_})  {
-			$new_hash{$_} = int($h->{$_});
+			if ($v !~ /^[\+\-]?\d+\.?$/) {
+				$self->error("On '%s' table, '%s' column's value is not %s: %s", $table, $_, 'integer', $v);
+				return;
+			}
+			$new_hash{$_} = int($v);
 		} elsif ($float_cols->{$_}) {
-			$new_hash{$_} = $h->{$_}+0;	# 数値化
+			if ($v !~ /^[\+\-]?\d+(?:\.\d*)?(?:[Ee][\+\-]?\d+)?$/) {
+				$self->error("On '%s' table, '%s' column's value is not %s: %s", $table, $_, 'number', $v);
+				return;
+			}
+			$new_hash{$_} = $v + 0;
+
 		} elsif ($flag_cols->{$_}) {
-			$new_hash{$_} = $h->{$_} ? 1 : 0;
-		} else {	# 文字列はそのまま
-			$new_hash{$_} = $h->{$_};
+			if ($v ne '0' && $v ne '1') {
+				$self->error("On '%s' table, '%s' column's value is not %s: %s", $table, $_, 'flag', $v);
+				return;
+			}
+			$new_hash{$_} = $v;
+
+		} else {	# string
+			$new_hash{$_} = $v;
 		}
 	}
-	# not null制約の確認
+	# check not null
 	my $notnull_cols = $self->{"$table.notnull"};
 	my @check_columns_ary = $is_update ? keys(%new_hash) : keys(%$notnull_cols);	# update or insert
 	foreach (@check_columns_ary) {
@@ -555,38 +677,25 @@ sub check_column_type {
 		if (!$is_update && $_ eq 'pkey') { next; }
 		if (!defined $h->{$_}) {
 			$self->error("On '%s' table, '%s' column is constrained not null", $table, $_);
-			return undef;
+			return;
 		}
 	}
 	return \%new_hash;
 }
 
-#-------------------------------------------------------------------------------
-# ●条件節カラムの解析と必要データのロード
-#-------------------------------------------------------------------------------
+################################################################################
+# generate where for update_match(), delete_match()
+################################################################################
 sub load_and_generate_where {
 	my $self = shift;
-	my $table = shift;
+	my $table= shift;
 	my $ROBJ = $self->{ROBJ};
 
-	# ハッシュ引数を書き換え
-	if ($#_ == 0 && ref($_[0]) eq 'HASH') {
-		my $h = shift;
-		foreach(sort(keys(%$h))) {
-			push(@_, $_);
-			push(@_, $h->{$_});
-		}
-	}
-
-	# 条件節に必要なカラムの確認
-	if (!exists $self->{"$table.idx"}) {
-		$self->load_index($table);
-	}
+	my $idx  = $self->{"$table.idx"} || $self->load_index($table);
 	my $cols = $self->{"$table.cols"};
-	my $idx  = $self->{"$table.idx"};
 	my $str  = $self->{"$table.str"};
 
-	# 条件節分析
+	# parse condition
 	my $load_all;
 	my @cond;
 	my %in;
@@ -595,40 +704,43 @@ sub load_and_generate_where {
 		my $val = shift;
 		my $not = 0;
 		if (!defined $col) { last; }
-		# 負論理？
+
+		# negative logic?
 		if (substr($col,0,1) eq '-') {
 			$col = substr($col,1);
 			$not = 1;
 		}
-		# 正しいカラムか？
+
+		# check column
 		if (! $cols->{$col}) {
 			$self->edit_index_exit($table);
 			$self->error("On '%s' table, not exists '%s' column", $table, $col);
 			return (undef,undef,undef);
 		}
-		if (! $idx->{$col}) { $load_all=1; }	# index以外を参照してる
+		if (! $idx->{$col}) { $load_all=1; }	# need row file data
 
-		# 関数の生成
+		# generate function
 		if (ref($val) eq 'ARRAY') {
-			# 複数マッチ
+			# multiple values
 			$in{$col} = { map {$_=>1} @$val };
 			push(@cond, ($not ? '!' : '') . "exists\$in->{$col}->{\$h->{$col}}");
 			next;
 		}
 		if ($str->{$col}) {
-			# 文字列カラム
+			# string
 			$val =~ s/([\\'])/\\$1/g;
 			push(@cond, $not ? "\$h->{$col}ne'$val'" : "\$h->{$col}eq'$val'");
 			next;
 		}
-		{
-			# 数値カラム
+		if (1) {
+			# other (int/number/flag)
 			$val += 0;
 			push(@cond, $not ? "\$h->{$col}!=$val" : "\$h->{$col}==$val");
 			next;
 		}
 	}
-	# 条件関数のコンパイル
+
+	# compile
 	my $func;
 	if (@cond) {
 		my $cond = join('&&', @cond);
@@ -638,83 +750,23 @@ sub load_and_generate_where {
 		$func = sub { return 1; };
 	}
 
-	# 条件節に必要なカラムの確認
+	# need row file data
 	if ($load_all) { $self->load_allrow($table); }
+
 	return ($func, $self->{"$table.tbl"}, \%in);
 }
 
 ################################################################################
-# ■サブルーチン
+# Subroutines
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●pkeyの生成
-#-------------------------------------------------------------------------------
-sub generate_pkey {
-	my ($self, $table) = @_;
-	my $ROBJ = $self->{ROBJ};
-	$table =~ s/\W//g;
-
-	if ($self->{begin}) {
-		# トランザクション中？
-		my $db = $self->load_index($table, 1);
-		if (!defined $db) {
-			$self->edit_index_exit($table);
-			$self->error("Can't find '%s' table", $table);
-			return 0;
-		}
-		return ++( $self->{"$table.serial"} )
-	}
-
-	# 編集準備
-	my $dir   = $self->{dir} . $table . '/';
-	my $index = $dir . $self->{index_file};
-	if (!-e $index && -e $dir) { $self->index_rebuild( $table ); }
-
-	# indexをopenしてlockをかける
-	my $fh;
-	if ( !sysopen($fh, $index, O_RDWR) ) {
-		return 0;
-	}
-	$ROBJ->write_lock($fh);
-	binmode($fh);
-
-	# データを読み出し
-	my $version = <$fh>;
-	my $random  = <$fh>;
-	my $serial  = <$fh>;
-
-	# 次の値
-	my $fail;
-	$serial =~ s/[\r\n]//g;
-	my $nextval = $serial+1;
-	my $datalen = length($serial);
-	if ($datalen < length($nextval)) { $fail=1; }	# データサイズ増加
-	# サイズ増加は、indexファイル生成時シリアル値の頭「00」をつけて回避している
-
-	# 書き換え準備
-	my $nextval_str = substr(('0' x $datalen) . $nextval, -$datalen);
-	if (length($nextval_str) != $datalen) { $fail=1; }	# 失敗
-	# 書き換え
-	if (!sysseek($fh, length($version)+length($random), 0)) { $fail=1; }
-	if (!$fail) {
-		if (syswrite($fh, $nextval_str, $datalen) != $datalen) { $fail=1; }
-	}
-	close($fh);
-	if ($fail) { return 0; }	# 失敗
-
-	$self->{"$table.serial"} = $nextval;
-	return $nextval;
-}
-
-#-------------------------------------------------------------------------------
-# ●index のセーブ
+# save index file
 #-------------------------------------------------------------------------------
 sub save_index {
-	my $self    = shift;
-	my $ROBJ    = $self->{ROBJ};
-	my ($table, $force) = @_;
+	my ($self, $table, $force) = @_;
+	my $ROBJ = $self->{ROBJ};
 
-	# トランザクション中は書き込まない。
+	# Do not write in transaction
 	if (!$force && $self->{begin}) {
 		$self->{transaction}->{$table}=1;
 		return 0;
@@ -726,58 +778,47 @@ sub save_index {
 	my $serial    = int($self->{"$table.serial"});		# serial
 
 	my @lines;
-	# 1行目 = DBファイルのVersion番号
-	push(@lines, "5\n");
-	# 2行目 = ランダム値
-	push(@lines, "R" . $ROBJ->{TM} . rand(1) . "\n");	# random signature
-	# 3行目 = シリアル値（現在の最大値）
-	# 	★★★仕様変更時は generate_pkey も編集のこと★★★
-	push(@lines, "00000$serial\n");	# 00付加必須
-	# 4行目 = 全カラム名
-	my @allcols = sort(keys(%{ $self->{"$table.cols"} }));
+	push(@lines, "5\n");					# LINE 01: DB file version
+	push(@lines, "R" . $ROBJ->{TM} . rand(1) . "\n");	# LINE 02: random signature
+	push(@lines, "0$serial\n");				# LINE 03: Serial number for pkey
+	# *** When rewriting the top 3 lines, also rewrite generate_pkey() ***
+
+	my @allcols = sort(keys(%{ $self->{"$table.cols"} }));				# LINE 04: all colmuns
 	push(@lines, join("\t", @allcols) . "\n");
-	# 5行目 = 整数カラム名
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.int"}     }))) . "\n");
-	# 6行目 = 数値カラム名
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.float"}   }))) . "\n");
-	# 7行目 = flagカラム名
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.flag"}    }))) . "\n");
-	# 8行目 = 文字列カラム
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.str"}     }))) . "\n");
-	# 9行目 = UNIQUEカラム
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.unique"}  }))) . "\n");
-	#10行目 = NOT NULLカラム
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.notnull"} }))) . "\n");
-	#11行目 = defaultカラム
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.int"}     }))) . "\n");	# LINE 05: int colmuns
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.float"}   }))) . "\n");	# LINE 06: number columns
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.flag"}    }))) . "\n");	# LINE 07: flag columns
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.str"}     }))) . "\n");	# LINE 08: string columns
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.unique"}  }))) . "\n");	# LINE 09: UNIQUE columns
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.notnull"} }))) . "\n");	# LINE 10: NOT NULL columns
 	my $de = $self->{"$table.default"};
-	push(@lines, join("\t", map { $de->{$_} } @allcols) . "\n");
+	push(@lines, join("\t", map { $de->{$_} } @allcols) . "\n");			# LINE 11: default values
 
-	# pkeyの昇順に全データを並べる
-	my @newary = sort { $a->{pkey} <=> $b->{pkey} } @$db;
-	$self->{"$table.tbl"} = \@newary;	# 内部保持を書き換え
-	$IndexCache{$table}  = \@newary;	# indexキャッシュ
+	# sort all lines order by pkey
+	my @new_db = sort { $a->{pkey} <=> $b->{pkey} } @$db;
+	$self->{"$table.tbl"} = \@new_db;
+	$IndexCache{$table}   = \@new_db;
 
-	# indexカラムを並べる
-	my @idx_cols;
-	{
+	# index colmuns
+	my @idx_cols = do {
 		my %h = %$idx_cols;
 		delete $h{pkey};
-		@idx_cols = ('pkey', sort(keys(%h)));
-	}
-	# 12行目 = indexカラム名
-	push(@lines, join("\t", @idx_cols) . "\n");
+		('pkey', sort(keys(%h)));
+	};
+	push(@lines, join("\t", @idx_cols) . "\n");					# LINE 12: index colmuns
 
 	#-----------------------------------------
-	# 行合成関数を生成
+	# generate row composition function
 	#-----------------------------------------
 	my $hash2line='';
 	foreach(@idx_cols) {
 		$_ =~ s/\W//g;
-		$hash2line.="\$h->{$_}\0";
+		$hash2line .= "\$h->{$_}\0";
 	}
 	chop($hash2line);
 
-	# TAB, 改行をspace１個に
+	# replace TAB and LF to space in index.
+	# if save "\0" to the index, that row will be destroyed.
 	my $line_func=<<FUNC;
 	sub {
 		my (\$ary,\$h) = \@_;
@@ -788,7 +829,7 @@ sub save_index {
 	}
 FUNC
 	$line_func = $self->eval_and_cache($line_func);
-	foreach(@newary) {
+	foreach(@new_db) {
 		&$line_func(\@lines, $_);
 	}
 
@@ -805,22 +846,24 @@ FUNC
 	} else {
 		$ROBJ->fwrite_lines($index, \@lines);
 	}
-	# 失敗
-	if ($r) { $self->clear_cache($table); return $r; }
 
-	# キャッシュ更新
+	if ($r) {	# fail
+		$self->clear_cache($table);
+		return $r;
+	}
+
+	# renew cache
 	$IndexCache{$table} = $self->{"$table.tbl"};
 	return 0;
 }
 
 #-------------------------------------------------------------------------------
-# ●index編集の破棄
+# discard index edit
 #-------------------------------------------------------------------------------
 sub edit_index_exit {
 	my ($self, $table) = @_;
-	if ($self->{begin}) {
-		# トランザクション中は書き込まない。
-		$self->{begin}=-1;	# エラー発生と見なす
+	if ($self->{begin}) {		# do not write in transaction
+		$self->{begin}=-1;	# set error flag
 		return 0;
 	}
 	if (defined $self->{"$table.lock"}) {
@@ -828,48 +871,48 @@ sub edit_index_exit {
 		$self->{ROBJ}->fedit_exit($self->{"$table.lock"});
 		delete $self->{"$table.lock"};
 	}
-	# キャッシュの削除
+
 	$self->clear_cache($table);
 }
 
 #-------------------------------------------------------------------------------
-# ●１カラムのデータを保存
+# save row file
 #-------------------------------------------------------------------------------
 sub write_rowfile {
 	my $self = shift;
 	my ($table, $h) = @_;
 
-	# トランザクション
+	# transaction
 	if ($self->{begin}) {
 		my $ary = $self->load_trace_ary($table);
 		push(@$ary, $h);	# hash
-		$h->{'*'}=1;		# ロード済フラグ設定
+		$h->{'*'}=1;		# set loaded flag
 		return 0;
 	}
 
-	# ハッシュ保存
+	# save
 	my $ROBJ = $self->{ROBJ};
 	my $ext  = $self->{ext};
 	my $dir  = $self->{dir} . $table . '/';
 
-	delete $h->{'*'};	# ロード済フラグ
+	delete $h->{'*'};	# delete loaded flag
 	my $r = $ROBJ->fwrite_hash($dir . sprintf($FileNameFormat, $h->{pkey}). $ext, $h);
-	$h->{'*'}=1;		# ロード済フラグ再設定
+	$h->{'*'}=1;		# save loaded flag
 	return $r;
 }
 
 #-------------------------------------------------------------------------------
-# ●１カラムのデータロード
+# delete row file
 #-------------------------------------------------------------------------------
 sub delete_rowfile {
 	my $self = shift;
 	my ($table, $pkey) = @_;
 	if (ref $pkey) { $pkey=$pkey->{pkey}; }
 
-	# トランザクション
+	# transaction
 	if ($self->{begin}) {
 		my $ary = $self->load_trace_ary($table);
-		push(@$ary, $pkey);	# 数値
+		push(@$ary, $pkey);	# save pkey
 		return 0;
 	}
 
@@ -880,12 +923,12 @@ sub delete_rowfile {
 }
 
 #-------------------------------------------------------------------------------
-# ●キャッシュの消去
+# clear cache data
 #-------------------------------------------------------------------------------
 sub clear_cache {
 	my $self  = shift;
 	my $table = shift;
-	# index の予備を保存
+
 	delete $self->{"$table.tbl"};
 	delete $self->{"$table.load_all"};
 	delete $IndexCache{$table};

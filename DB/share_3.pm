@@ -1,13 +1,18 @@
 use strict;
 #-------------------------------------------------------------------------------
 package Sakia::DB::share_3;
-our $VERSION = '1.00';
-our @ISA    = qw(Exporter);
-our @EXPORT = qw(&get_options &create_table_wrapper);
+our $VERSION = $Sakia::DB::share::VERSION;
+
+use Exporter 'import';
+our @EXPORT = qw(
+	get_options
+	create_table_wrapper
+);
+
 ################################################################################
-# ■オプショナル関数情報
+# optional functions
 ################################################################################
-my @optional_methods = qw(add_column drop_column add_index load_dbh);
+my @optional_methods = qw(add_column drop_column add_index);
 
 sub get_options {
 	my $self=shift;
@@ -19,37 +24,34 @@ sub get_options {
 }
 
 ################################################################################
-# ■拡張
+# create table wrapper
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●create tableのラッパー
-#-------------------------------------------------------------------------------
 sub create_table_wrapper {
 	my $self = shift;
 	my ($table, $ci, $ext) = @_;
 	my %cols;
-	foreach(@{$ci->{flag}})    { $cols{$_} = {name => $_, type => 'flag'}; }	# 整数カラム
-	foreach(@{$ci->{text}})    { $cols{$_} = {name => $_, type => 'text'}; }	# テキスト
-	foreach(@{$ci->{ltext}})   { $cols{$_} = {name => $_, type => 'ltext'};}	# 大きいテキスト
-	foreach(@{$ci->{int}})     { $cols{$_} = {name => $_, type => 'int'};  }	# 整数カラム
-	foreach(@{$ci->{float}})   { $cols{$_} = {name => $_, type => 'float'};}	# 少数カラム
-	foreach(@{$ci->{idx}})     { $cols{$_}->{index}    = 1; }			# indexカラム
-	foreach(@{$ci->{idx_tdb}}) { $cols{$_}->{index_tdb}= 1; }			# index_tdbカラム
-	foreach(@{$ci->{unique}})  { $cols{$_}->{unique}   = 1; }			# uniqueカラム
-	foreach(@{$ci->{notnull}}) { $cols{$_}->{not_null} = 1; }			# NOT NULLeカラム
-	while(my ($k, $v) = each(%{ $ci->{default} })) {		# デフォルト
+	foreach(@{$ci->{flag}})    { $cols{$_} = {name => $_, type => 'flag'}; }	# boolean
+	foreach(@{$ci->{text}})    { $cols{$_} = {name => $_, type => 'text'}; }	# text
+	foreach(@{$ci->{ltext}})   { $cols{$_} = {name => $_, type => 'ltext'};}	# large text
+	foreach(@{$ci->{int}})     { $cols{$_} = {name => $_, type => 'int'};  }	# int
+	foreach(@{$ci->{float}})   { $cols{$_} = {name => $_, type => 'float'};}	# float
+	foreach(@{$ci->{idx}})     { $cols{$_}->{index}    = 1; }			# index
+	foreach(@{$ci->{idx_tdb}}) { $cols{$_}->{index_tdb}= 1; }			# index for Text-DB
+	foreach(@{$ci->{unique}})  { $cols{$_}->{unique}   = 1; }			# unique
+	foreach(@{$ci->{notnull}}) { $cols{$_}->{not_null} = 1; }			# NOT NULL
+	while(my ($k, $v) = each(%{ $ci->{default} })) {		# default
 		$cols{$k}->{default}  = $v;
 	}
-	while(my ($k, $v) = each(%{ $ci->{ref} })) {			# 外部キー
+	while(my ($k, $v) = each(%{ $ci->{ref} })) {			# foreign key
 		$cols{$k}->{ref} = $v;
 	}
 	my @cols;
 	while(my ($k,$v) = each(%cols)) { push(@cols, $v); }
-	foreach (@{$ext || []}) {	# 追加カラム
+	foreach (@{$ext || []}) {
 		push(@cols, $_);
 	}
 
-	return $self->create_table("$table", \@cols);	# テーブルの作成
+	return $self->create_table($table, \@cols);
 }
 
 1;

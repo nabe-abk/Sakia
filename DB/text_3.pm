@@ -5,22 +5,23 @@ use Sakia::DB::share_3;
 our $FileNameFormat;
 our %IndexCache;
 ################################################################################
-# ■テーブルの操作
+# manupilate table
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●create table
+# create table
 #-------------------------------------------------------------------------------
 sub create_table {
 	my $self = shift;
 	my $ROBJ = $self->{ROBJ};
 	my ($table, $colums) = @_;
 	$table =~ s/\W//g;
+	$table =~ tr/A-Z/a-z/;
 	if ($table eq '') { $self->error('Called create_table() with null table name'); return 9; }
 
-	# テーブル構造の解析
-	my %cols       = ('pkey'=>1);	# pkey : 先頭最初のカラム
-	my %index_cols = ('pkey'=>1);
-	my %int_cols   = ('pkey'=>1);
+	# parse table
+	my %cols         = ('pkey'=>1);
+	my %index_cols   = ('pkey'=>1);
+	my %int_cols     = ('pkey'=>1);
 	my %float_cols;
 	my %flag_cols;
 	my %str_cols;
@@ -36,7 +37,7 @@ sub create_table {
 			$self->error("Column %s is dupulicate or 'pkey' is not allow", $table, $col);
 			return 10;
 		}
-		$cols{$col}=1;	# ここを書き換えたら add_column も変更すること
+		$cols{$col}=1;	# *** if you change this, also change add_column() ***
 		if    ($_->{type} eq 'int')   { $int_cols  {$col}=1; }
 		elsif ($_->{type} eq 'float') { $float_cols{$col}=1; }
 		elsif ($_->{type} eq 'flag')  { $flag_cols {$col}=1; }
@@ -50,7 +51,7 @@ sub create_table {
 		if ($_->{not_null})      { $notnull_cols{$col}=1; }
 		if ($_->{default} ne '') { $default{$col} = $_->{default}; }
 
-		# indexカラム？（UNIQUEカラムはindexにする）
+		# if UNIQUE set index
 		if ($_->{index} || $_->{index_tdb} || $_->{unique}) {
 			$index_cols{$col}=1;
 		}
@@ -71,18 +72,17 @@ sub create_table {
 	}
 
 	$self->{"$table.tbl"}     = [];			# table array ref
-	$self->{"$table.cols"}    = \%cols;		# 全カラム名
-	$self->{"$table.idx"}     = \%index_cols;	# indexカラム
-	$self->{"$table.int"}     = \%int_cols;		# 整数カラム
-	$self->{"$table.float"}   = \%float_cols;	# 数値カラム
-	$self->{"$table.flag"}    = \%flag_cols;	# フラグ
-	$self->{"$table.str"}     = \%str_cols;		# 文字列
+	$self->{"$table.cols"}    = \%cols;		# all
+	$self->{"$table.idx"}     = \%index_cols;	# index
+	$self->{"$table.int"}     = \%int_cols;		# integer
+	$self->{"$table.float"}   = \%float_cols;	# number
+	$self->{"$table.flag"}    = \%flag_cols;	# flag(boolean)
+	$self->{"$table.str"}     = \%str_cols;		# string
 	$self->{"$table.unique"}  = \%unique_cols;	# UNIQUE
 	$self->{"$table.notnull"} = \%notnull_cols;	# NOT NULL
-	$self->{"$table.default"} = \%default;		# Default
+	$self->{"$table.default"} = \%default;		# Default value
 	$self->{"$table.serial"}  = 0;
 
-	# index の保存
 	$self->save_index($table);
 	$self->save_backup_index($table);
 
@@ -90,9 +90,8 @@ sub create_table {
 }
 
 #-------------------------------------------------------------------------------
-# ●テーブルの削除
+# drop table
 #-------------------------------------------------------------------------------
-# 成功時は 0 が返る
 sub drop_table {
 	my ($self, $table) = @_;
 	my $ROBJ = $self->{ROBJ};
@@ -108,27 +107,26 @@ sub drop_table {
 	}
 	if (!rmdir($dir)) { $flag+=10000; }
 
-	# キャッシュクリア
 	$self->clear_cache($table);
 
-	return $flag;
+	return $flag;		# 0 is success
 }
 
 #-------------------------------------------------------------------------------
-# ●index の再構築
+# rebuild index file
 #-------------------------------------------------------------------------------
-sub index_rebuild {
+sub rebuild_index {
 	my ($self, $table) = @_;
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my $dir = $self->{dir} . $table . '/';
-	my $index_backup_file = $dir . $self->{index_backup_file};
-	if (!-r $index_backup_file) { return 1; }
+	my $index_backup = $dir . $self->{index_backup};
+	if (!-r $index_backup) { return 1; }
 
 	# バックアップの読み込み
 	my $index_file_orig = $self->{index_file};
-	$self->{index_file} = $self->{index_backup_file};
+	$self->{index_file} = $self->{index_backup};
 	my $db = $self->load_index($table);
 	$self->{index_file} = $index_file_orig;
 
@@ -144,28 +142,27 @@ sub index_rebuild {
 		if ($serial < $h->{pkey}) { $serial = $h->{pkey}; } 
 	}
 
-	# キャッシュをクリアする
 	$self->clear_cache($table);
 
-	$self->{"$table.serial"} = $serial +1;
+	$self->{"$table.serial"} = $serial;
 	$self->{"$table.tbl"}    = \@db;
-	$IndexCache{$table}     = \@db;
-	$self->save_index($table, 1);	# force
+	$IndexCache{$table}      = \@db;
+	$self->save_index($table, 'force flag');
 }
 
 ################################################################################
-# ■オプショナル関数
+# optional functions
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●カラムの追加
+# add column
 #-------------------------------------------------------------------------------
 sub add_column {
 	my ($self, $table, $h) = @_;
 	my $ROBJ = $self->{ROBJ};
 
-	# テーブルindex のロード
+	# load index
 	$table =~ s/\W//g;
-	my $db = $self->load_index($table, 1);
+	my $db = $self->load_index_for_edit($table);
 	if (!defined $db) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' table", $table);
@@ -176,14 +173,14 @@ sub add_column {
 	$col =~ s/\W//g;
 	if ($col eq '') { return 8; }
 
-	# カラム名の確認
+	# check column name
 	my $cols = $self->{"$table.cols"};
-	if ($cols->{$col}) {	# 同じ名前のカラムがある
+	if ($cols->{$col}) {
 		$self->edit_index_exit($table);
 		$self->error("'%s' is already exists in relation '%s'", $col, $table);
 		return 8;
 	}
-	# テーブル情報の書き換え
+	# update table info
 	if    ($h->{type} eq 'int')   { $self->{"$table.int"}  ->{$col}=1; }
 	elsif ($h->{type} eq 'float') { $self->{"$table.float"}->{$col}=1; }
 	elsif ($h->{type} eq 'flag')  { $self->{"$table.flag"} ->{$col}=1; }
@@ -198,17 +195,15 @@ sub add_column {
 	if ($h->{notnull}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
 	if ($h->{index} || $h->{unique}) { $self->{"$table.idx"}->{$col}=1; }
 
-	# index の保存
 	$self->save_index($table);
 	$self->save_backup_index($table);
-	# キャッシュクリア
 	$self->clear_cache($table);
 
 	return 0;
 }
 
 #-------------------------------------------------------------------------------
-# ●カラムの削除
+# drop column
 #-------------------------------------------------------------------------------
 sub drop_column {
 	my ($self, $table, $column) = @_;
@@ -217,20 +212,23 @@ sub drop_column {
 	$column =~ s/\W//g;
 	if ($table eq '' || $column eq '') { return 7; }
 
-	# テーブルindex のロード
+	# load index
 	$table =~ s/\W//g;
-	my $db = $self->load_index($table, 1);
+	my $db = $self->load_index_for_edit($table);
 	if (!defined $db) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' table", $table);
 		return 8;
 	}
+
+	# column exists?
 	if (! $self->{"$table.cols"}->{$column}) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' column in relation '%s'", $column, $table);
 		return 9;
 	}
-	# テーブル情報の書き換え
+
+	# update table info
 	delete $self->{"$table.cols"}->{$column};
 	delete $self->{"$table.int"}->{$column};
 	delete $self->{"$table.float"}->{$column};
@@ -240,7 +238,7 @@ sub drop_column {
 	delete $self->{"$table.notnull"}->{$column};
 	delete $self->{"$table.idx"}->{$column};
 
-	# 削除カラムのデータ消去
+	# delete column from all row data
 	$self->load_allrow($table);
 	my $all = $self->{"$table.tbl"};
 	foreach(@$all) {
@@ -250,46 +248,44 @@ sub drop_column {
 		$self->write_rowfile($table, $_);
 	}
 
-	# index の保存
 	$self->save_index($table);
 	$self->save_backup_index($table);
-	# キャッシュクリア
 	$self->clear_cache($table);
 
 	return 0;
 }
 
 #-------------------------------------------------------------------------------
-# ●インデックスの追加
+# add index
 #-------------------------------------------------------------------------------
 sub add_index {
 	my ($self, $table, $column) = @_;
 	my $ROBJ = $self->{ROBJ};
 
-	# テーブルindex のロード
+	# load index
 	$table =~ s/\W//g;
-	my $db = $self->load_index($table, 1);
+	my $db = $self->load_index_for_edit($table);
 	if (!defined $db) {
 		$self->edit_index_exit($table);
 		$self->error("Can't find '%s' table", $table);
 		return 9;
 	}
 
-	# テーブル情報の書き換え
+	# update table info
 	my $cols = $self->{"$table.cols"};
 	my $idx  = $self->{"$table.idx"};
-	if (! grep { $_ eq $column } @$cols) {	# カラムが存在しない
+	if (! grep { $_ eq $column } @$cols) {	# not exists
 		$self->edit_index_exit($table);
 		$self->error("On '%s' table, not exists '%s' column", $table, $column);
 		return 8;
 	}
-	if (! grep { $_ eq $column } @$idx) {	# index に追加
+	if (! grep { $_ eq $column } @$idx) {	# add to index
 		push(@$idx, $column);
 		my $dir     = $self->{dir} . $table . '/';
 		my $ext = $self->{ext};
 		$self->load_allrow($table);
 	}
-	# index の保存
+
 	$self->save_index($table);
 	$self->save_backup_index($table);
 
@@ -297,20 +293,15 @@ sub add_index {
 }
 
 ################################################################################
-# ■サブルーチン
+# update backup index file
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●バックアップファイルの書き換え
-#-------------------------------------------------------------------------------
 sub save_backup_index {
 	my $self  = shift;
 	my $table = shift;
-	# index の予備を保存
-	my $index_file_orig = $self->{index_file};
-	$self->{index_file} = $self->{index_backup_file};
+
+	local ($self->{index_file})   = $self->{index_backup};
 	local ($self->{"$table.tbl"}) = [];
 	$self->save_index($table, 1);
-	$self->{index_file} = $index_file_orig;
 	return 0;
 }
 

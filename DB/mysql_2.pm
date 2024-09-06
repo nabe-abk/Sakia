@@ -1,10 +1,10 @@
 use strict;
 package Sakia::DB::mysql;
 ################################################################################
-# ■データの挿入・削除
+# insert, update, delete
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●データの挿入
+# insert
 #-------------------------------------------------------------------------------
 sub insert {
 	my ($self, $table, $h) = @_;
@@ -29,17 +29,17 @@ sub insert {
 	}
 	chop($cols); chop($vals);
 
-	# pkey保存 insert
+	# insert with pkey
 	my $pkey = int($h->{pkey});
 	if (exists $h->{pkey} && $pkey<1) {
 		$self->error("pkey=$pkey error on $table");
 		return 0;
 	}
 
-	# SQL 発行
+	# execute
 	my $sql = "INSERT INTO $table($cols) VALUES($vals)";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql, \@ary);	## safe
+	$self->trace($sql, \@ary);
 	$sth && $sth->execute(@ary);
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
@@ -48,13 +48,11 @@ sub insert {
 	}
 	if ($sth->rows != 1) { return 0; }
 
-	# 成功した場合 pkey を返す
-	if ($pkey) { return $pkey; }
-	return $sth->{mysql_insertid};	# auto_increment の値
+	return $pkey ? $pkey : $sth->{mysql_insertid};
 }
 
 #-------------------------------------------------------------------------------
-# ●pkeyの生成
+# generate pkey
 #-------------------------------------------------------------------------------
 sub generate_pkey {
 	my ($self, $table) = @_;
@@ -62,10 +60,10 @@ sub generate_pkey {
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	# not nullカラムを探し、適当なデフォルト値を生成する
+	# find not null colmuns
 	my $sql = "show columns FROM $table WHERE `Null`='NO' AND `Key`!='PRI' AND `Default` is null";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql);	## safe
+	$self->trace($sql);
 	$sth && $sth->execute();
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
@@ -87,10 +85,10 @@ sub generate_pkey {
 		}
 	}
 
-	# ダミーデータを挿入し削除する
+	# insert dummy data
 	my $sql = "INSERT INTO $table(" . join(',', @cols) . ") VALUES(" . join(',', @vals) . ")";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql);	## safe
+	$self->trace($sql);
 	$sth && $sth->execute();
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
@@ -98,20 +96,20 @@ sub generate_pkey {
 		return 0;
 	}
 
-	# pkey保存
+	# save pkey
 	my $pkey=$sth->{mysql_insertid};
 
-	# 挿入データの削除
+	# delete dummy data
 	$sql = "DELETE FROM $table WHERE pkey=$pkey";
 	$sth = $dbh->prepare($sql);
-	$self->debug($sql);	## safe
+	$self->trace($sql);
 	$sth && $sth->execute();
 
-	return $pkey;	# pkey
+	return $pkey;
 }
 
 #-------------------------------------------------------------------------------
-# ●データの更新
+# update
 #-------------------------------------------------------------------------------
 sub update_match {
 	my $self = shift;
@@ -121,7 +119,7 @@ sub update_match {
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	# 更新データSQL
+	# for set values
 	my $cols;
 	my @ary;
 	foreach(sort(keys(%$h))) {
@@ -140,24 +138,22 @@ sub update_match {
 	chop($cols);
 	if ($cols eq '') { return 0; }
 
-	# 条件部SQL
 	my $where = $self->generate_where(\@ary, @_);
 
-	# SQL 発行
 	my $sql = "UPDATE $table SET $cols$where";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql, \@ary);	## safe
+	$self->trace($sql, \@ary);
 	$sth && $sth->execute( @ary );
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
 		$self->error($dbh->errstr);
 		return 0;
 	}
-	return $sth->rows;	# 更新した行数
+	return $sth->rows;
 }
 
 #-------------------------------------------------------------------------------
-# ●データの削除
+# delete
 #-------------------------------------------------------------------------------
 sub delete_match {
 	my $self = shift;
@@ -166,14 +162,12 @@ sub delete_match {
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	# 条件部SQL
 	my @ary;
 	my $where = $self->generate_where(\@ary, @_);
 
-	# SQL 発行
 	my $sql = "DELETE FROM $table$where";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql, \@ary);	## safe
+	$self->trace($sql, \@ary);
 	$sth && $sth->execute( @ary );
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
@@ -185,62 +179,60 @@ sub delete_match {
 }
 
 ################################################################################
-# ■データの集計
+# select by group
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●テーブルの情報を集計
-#-------------------------------------------------------------------------------
 sub select_by_group {
 	my ($self, $table, $h, $w) = @_;
 	my $dbh  = $self->{dbh};
 	my $ROBJ = $self->{ROBJ};
-	$table     =~ s/\W//g;
-
-	my $sum_cols = ref($h->{sum_cols}) ? $h->{sum_cols} : ($h->{sum_cols} eq '' ? [] : [ $h->{sum_cols} ]);
-	my $max_cols = ref($h->{max_cols}) ? $h->{max_cols} : ($h->{max_cols} eq '' ? [] : [ $h->{max_cols} ]);
-	my $min_cols = ref($h->{min_cols}) ? $h->{min_cols} : ($h->{min_cols} eq '' ? [] : [ $h->{min_cols} ]);
 
 	#-----------------------------------------
-	# SQLを実行
+	# parse
 	#-----------------------------------------
-	my $sel = 'count(pkey) AS _count';
-	foreach(@$sum_cols) {
-		my $c = $_;
-		$c =~ s/\W//g;
-		$sel .= ", sum($c) AS ${c}_sum";
-	}
-	foreach(@$max_cols) {
-		my $c = $_;
-		$c =~ s/\W//g;
-		$sel .= ", max($c) AS ${c}_max";
-	}
-	foreach(@$min_cols) {
-		my $c = $_;
-		$c =~ s/\W//g;
-		$sel .= ", min($c) AS ${c}_min";
+	my ($table, $as)   = $self->parse_table_name($table);
+	my ($ljoin, $jcol) = $self->generate_left_join($h);
+	my ($where, $ary)  = $self->generate_select_where($h);
+	if ($ljoin && $as eq '') { $as=$table; }
+	my $tname = $as ? "$as." : '';
+
+	#-----------------------------------------
+	# select columns
+	#-----------------------------------------
+	my $cols = "count(${tname}pkey) as _count";
+	foreach my $type (qw(sum max min)) {
+		my $x = $h->{"${type}_cols"};
+		if (!$x) { next; }
+
+		my $ary = ref($x) ? $x : [ $x ];
+		foreach(@$ary) {
+			my $c = $_ =~ s/[^\w\.]//rg;
+			my $n = $c =~ s/.*?(\w+)$/$1/r;
+			$cols .= ", $type($c) as ${n}_$type";
+		}
 	}
 
+	#-----------------------------------------
 	# group by
-	my $group_by;
-	my $group_col = $h->{group_by};
-	if ($group_col ne '') {
-		$group_col =~ s/\W//g;
-		$group_by  = " GROUP BY $group_col";
-		$sel .= ", $group_col";
+	#-----------------------------------------
+	my $group_by = '';
+	my $gcol = $h->{group_by} =~ s/[^\w\.]//rg;
+	if ($gcol ne '') {
+		$group_by  = " GROUP BY $gcol";
+		$cols .= ", $gcol";
 	}
 
-	# where処理
-	my ($where, $ary) = $self->generate_select_where($h);
-
-	# ソート処理
-	my $order_by = $self->generate_order_by($h);
+	#-----------------------------------------
+	# make SQL
+	#-----------------------------------------
+	my $from = $table . $ljoin;
+	my $sql  = "SELECT $cols FROM $from$where$group_by"
+		 . $self->generate_order_by($h);
 
 	#-----------------------------------------
-	# SQLを発行
+	# execute
 	#-----------------------------------------
-	my $sql = "SELECT $sel FROM $table$where$group_by$order_by";
 	my $sth = $dbh->prepare($sql);
-	$self->debug($sql, $ary);	## safe
+	$self->trace($sql, $ary);
 	$sth && $sth->execute(@$ary);
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
@@ -251,54 +243,40 @@ sub select_by_group {
 }
 
 ################################################################################
-# ■トランザクション
+# transaction
 ################################################################################
-# DBによっては、実装されてないかも知れない。
 sub begin {
 	my $self = shift;
 	my $dbh  = $self->{dbh};
 	$self->{begin} = 1;
-	$self->debug('BEGIN');		## safe
+	$self->trace('BEGIN');
 	$dbh->begin_work();
 }
 sub commit {
 	my $self = shift;
 	my $dbh  = $self->{dbh};
-	if ($self->{begin}<0) {
+	if ($self->{begin}<0) {		# set by error() in share.pm
 		return $self->rollback();
 	}
 	$self->{begin} = 0;
-	$self->debug('COMMIT');		## safe
-	$dbh->commit();
-	return 0;
+	$self->trace('COMMIT');
+	return !$dbh->commit();
 }
 sub rollback {
 	my $self = shift;
 	my $dbh  = $self->{dbh};
 	$self->{begin} = 0;
-	$self->debug('ROLLBACK');	## safe
+	$self->trace('ROLLBACK');
 	$dbh->rollback();
 	return -1;
 }
 
 ################################################################################
-# ■サブルーチン
+# generate where for update_match(), delete_match()
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●whereの生成
-#-------------------------------------------------------------------------------
 sub generate_where {
 	my $self = shift;
 	my $ary  = shift;
-
-	# ハッシュ引数を書き換え
-	if ($#_ == 0 && ref($_[0]) eq 'HASH') {
-		my $h = shift;
-		foreach(sort(keys(%$h))) {
-			push(@_, $_);
-			push(@_, $h->{$_});
-		}
-	}
 
 	my $where;
 	while(@_) {
@@ -317,8 +295,9 @@ sub generate_where {
 			push(@$ary, $val);
 			next;
 		}
-		# 値が配列のとき
-		if (!@$val) {	# 空の配列
+		# $val is array
+
+		if (!@$val) {
 			$where .= $not ? '' : ' AND false';
 			next;
 		}
@@ -332,16 +311,16 @@ sub generate_where {
 	return $where;
 }
 
-#-------------------------------------------------------------------------------
-# ●SQLの実行
-#-------------------------------------------------------------------------------
+################################################################################
+# direct SQL
+################################################################################
 sub do_sql {
 	my $self = shift;
 	my $sql  = shift;
 	my $ROBJ = $self->{ROBJ};
 
 	my $dbh = $self->{dbh};
-	$self->debug($sql, \@_);	## safe
+	$self->trace($sql, \@_);
 	my $sth = $dbh->prepare($sql);
 	$sth && $sth->execute(@_);
 	if (!$sth || $dbh->err) {
@@ -362,22 +341,16 @@ sub select_sql {
 	return $sth->fetchall_arrayref({});
 }
 
-#-------------------------------------------------------------------------------
-# ●dbhのロード
-#-------------------------------------------------------------------------------
 sub load_dbh {
 	my $self = shift;
 	return $self->{dbh};
 }
 
-#-------------------------------------------------------------------------------
-# ●prepare
-#-------------------------------------------------------------------------------
 sub prepare {
 	my $self = shift;
 	my $sql  = shift;
 	my $dbh  = $self->{dbh};
-	$self->debug($sql);	## safe
+	$self->trace($sql);
 	return $dbh->prepare($sql);
 }
 

@@ -1,52 +1,47 @@
 use strict;
 #-------------------------------------------------------------------------------
-# テキストデータベース
-#						(C)2005-2022 nabe@abk
+# Text database
+#						(C)2005-2024 nabe@abk
 #-------------------------------------------------------------------------------
+# Note) Avoid destroying the internal hash array $db when returning values.
 #
-#■■■編集時の注意■■■
-# 　値を返し、または変更するとき、内部ハッシュ配列 $db および
-# その格納値であるハッシュリファレンスの実体を破壊されないようにすること。
+# Note:JP) 値を返すとき、内部ハッシュ配列 $db を破壊されないようにすること。
 #
 package Sakia::DB::text;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
-
-our $VERSION = '1.32';
+#-------------------------------------------------------------------------------
+our $VERSION = '1.40';
 our $FileNameFormat = "%05d";
 our %IndexCache;
 ################################################################################
-# ■基本処理
+# constructor
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●【コンストラクタ】
-#-------------------------------------------------------------------------------
 sub new {
 	my $class = shift;
-	my ($ROBJ, $dir, $self) = @_;
-	$self ||= {};
-	bless($self, $class);	# $self をこのクラスと関連付ける
+	my ($ROBJ, $dir, $opt) = @_;
+
+	my $ext  = $opt->{ext} || '.dat';
+	my $self = bless({
+		%{ $opt || {}},		# options
+		ROBJ	=> $ROBJ,
+		DBMS	=> 'STextDB',
+		ID	=> "stext.$dir",
+
+		ext		=> $ext,
+		dir		=> $dir,
+		index_file	=> "#index$ext",
+		index_backup	=> "#index.backup$ext"
+	}, $class);
 
 	if (!-e $dir) { $ROBJ->mkdir($dir); }
-	$self->{ROBJ} = $ROBJ;
-	$self->{dir}  = $dir;
-
-	# ディフォルト値
-	$self->{DBMS}   = 'Text-DB';
-	$self->{db_id}  = "$dir:";
-	$self->{ext}  ||= ".dat";
-	$self->{index_file}  = "#index" . $self->{ext};
-	$self->{index_backup_file} = "#index.backup" . $self->{ext};
 
 	return $self;
 }
 
 ################################################################################
-# ■テーブルの操作
+# find table
 ################################################################################
-#-------------------------------------------------------------------------------
-# ●テーブルの存在確認
-#-------------------------------------------------------------------------------
 sub find_table {
 	my $self = shift;
 	my $ROBJ = $self->{ROBJ};
@@ -56,55 +51,55 @@ sub find_table {
 	my $dir   = $self->{dir} . $table . '/';
 	my $index = $dir . $self->{index_file};
 	if (!-e $index) {
-		if (-e "$dir$self->{index_backup_file}") { return 1; }	# Found
+		if (-e "$dir$self->{index_backup}") { return 1; }	# Found
 		return 0;	# Not found
 	}
 	return 1;
 }
 
 ################################################################################
-# ■データの検索
+# select
 ################################################################################
-# called by select method in DB_share.
 sub select {
 	my $self = shift;
-	my $table= shift;
+	my $_tbl = shift;
 	my $h    = shift;
 	my $ROBJ = $self->{ROBJ};
-	local($self->{no_error}) = $h->{no_error};
 
-	$table =~ s/\W//g;
-	my $require_hits = wantarray;
+	my %names;	# table names
 
-	my $db = $self->load_index($table, undef);	# table array ref
+	#-----------------------------------------------------------------------
+	# load table infomation
+	#-----------------------------------------------------------------------
+	my ($table, $tname) = $self->parse_table_name($_tbl);
+	$names{$tname} = $table;
+
+	my $db = $self->load_index($table);	# table array ref
 	if ($#$db < 0) { return []; }
+	my $db_orig = $db;
 
-	#-----------------------------------------------------------------------
-	# 全文データロードの準備
-	#-----------------------------------------------------------------------
 	my $dir = $self->{dir} . $table . '/';
 	my $ext = $self->{ext};
-
-	# カラム情報のロード
-	my $index_cols  = $self->{"$table.idx"};
-	my $exists_cols = $self->{"$table.cols"};
+	my $index_cols = $self->{"$table.idx"};
+	my $all_cols   = $self->{"$table.cols"};
+	my $load_cols  = $self->{"$table.load_all"} ? $all_cols : $index_cols;
 
 	#-----------------------------------------------------------------------
-	# 選択カラムが正しいか？
+	# check select columns
 	#-----------------------------------------------------------------------
 	my $sel_cols = $h->{cols};
 	if ($sel_cols) {
 		$sel_cols = ref($sel_cols) ? $sel_cols : [ $sel_cols ];
-		if (my @ary = grep { !$exists_cols->{$_} } @$sel_cols) {
+		if (my @ary = grep { !$all_cols->{$_} } @$sel_cols) {
 			foreach(@ary) {
-				$self->error("Select column '$_' is not exists");
+				$self->error('"%s" column is not exists (for %s)', $_, 'SELECT');
 			}
 			return [];
 		}
 	}
 
 	#-----------------------------------------------------------------------
-	# マッチング条件の処理
+	# load conditions data
 	#-----------------------------------------------------------------------
 	my @match    = sort( keys(%{ $h->{match}     }) );
 	my @not_match= sort( keys(%{ $h->{not_match} }) );
@@ -127,77 +122,234 @@ sub select {
 	my @target_cols    = (@target_cols_L1, @target_cols_L2);
 
 	#-----------------------------------------------------------------------
-	# limit設定あり？
+	# check sort
 	#-----------------------------------------------------------------------
-	my $limit_state;
-	if (!$require_hits && $h->{limit} ne '') {
-		$limit_state = int($h->{limit}) -1 + int($h->{offset});
-	}
-
-	#-----------------------------------------------------------------------
-	# sort対象の確認
-	#-----------------------------------------------------------------------
-	my ($sort_func, $sort) = $self->generate_sort_func($table, $h);
-	my $sort_state;
+	my ($sort_func, $sort) = $self->generate_sort_func($table, $h, $tname);
+	# removed "$tname.col" to "col" in @$sort
+	#
+	my $req_sort;		# require sort
+	my $sort_req_load_all;	# all data required for sort
+	#
 	if (@$sort) {
-		if (my @ary = grep { !$exists_cols->{$_} } @$sort) {
-			foreach(@ary) {
-				$self->error("Sort column '$_' is not exists");
+		$req_sort = 1;
+		foreach(@$sort) {
+			if ($_ =~ /^(\w+)\.(\w+)$/) { next; }	# This column check by parse left join
+
+			if (!$load_cols->{$_}) { $sort_req_load_all=1; }
+			if (!$all_cols->{$_}) {
+				$self->error('"%s" column is not exists (for %s)', $_, 'SORT');
+				return [];
 			}
-			return [];
-		}
-		# $sort_state
-		#   bit 0	ソートが必要
-		#   bit 1	リミットあり
-		#   bit 2	ソートに必要なデータはロード済
-		$sort_state = 1;
-		if (defined $limit_state) { $sort_state |= 2; }
-		if (! grep{!$index_cols->{$_}} @$sort) {
-			$sort_state |= 4;
 		}
 	}
 
 	#-----------------------------------------------------------------------
-	# 抽出処理
+	# limit
 	#-----------------------------------------------------------------------
-	my $load_all_data = $self->{"$table.load_all"};
-	my $copy_flag;
+	my $limit  = int($h->{limit});
+	my $offset = int($h->{offset});
+	if ($h->{limit} ne '' && !$limit) { return []; }	# limit is 0
+	if ($offset<0) {
+		$self->error('Offset must not be negative: %s', $h->{offset});
+		return [];
+	}
+
+	my $limit_of_search;
+	if (!wantarray && $limit) {		# wantarray is require hits
+		$limit_of_search = $limit + $offset;
+	}
+
+	#-----------------------------------------------------------------------
+	# parse left join
+	#-----------------------------------------------------------------------
+	my %join_keymap;	# main table pkey to join table's line hash data
+	my %join_req_all;	# require all the data from the joined table for return value
+	my %join_colname;	# column name of return value to joined table's name and column
+	if ($h->{ljoin}) {
+		# copy all table data
+		my @ary;
+		foreach(@$db) {
+			my %h=%$_;
+			push(@ary, \%h);
+		}
+		$db = \@ary;
+
+		my $jary    = ref($h->{ljoin}) eq 'ARRAY' ? $h->{ljoin} : [ $h->{ljoin} ];
+		my @lr_cols = map { $_->{left}, $_->{right} } @$jary;
+
+		foreach(@$jary) {
+			my $jtable = $_->{table};
+			my ($jt,$jn) = $self->parse_table_name($jtable);
+			if ($jt eq '' || $jn eq '' || !$self->find_table($jt)) {
+				$self->error('Table not found: %s', $jtable);
+				return [];
+			}
+			if (exists($names{$jn})) {
+				$self->error('Table name is duplicate: %s', $jn);
+				return [];
+			}
+			#---------------------------------------------
+			# join table infomation
+			#---------------------------------------------
+			$names{$jn}=$jt;
+			my $jdb = $self->load_index($jt);
+			my $idx = $self->{"$jt.idx"};
+			my $all = $self->{"$jt.cols"};
+
+			#---------------------------------------------
+			# check join condition
+			#---------------------------------------------
+			my $left  = $_->{left};
+			my $right = $_->{right};
+			if ($right =~ /^(\w+)/ && $1 ne $jn) {	# swap L/R if right is base table
+				my $x = $left;
+				$left = $right;
+				$right= $x;
+			}
+			my ($ln, $lc) = $left  =~ /^(\w+)\.(\w+)$/ ? ($1,$2) : undef;
+			my ($rn, $rc) = $right =~ /^(\w+)\.(\w+)$/ ? ($1,$2) : undef;
+
+			if ($ln eq '' || $rn eq '' || $ln eq $jn || $rn ne $jn) {
+				$self->error('Illegal join rule on "%s": left=%s, right=%s', $jtable, $left, $right);
+				return [];
+			}
+			my $ltable = $names{$ln};
+			if (!$ltable || !$self->{"$ltable.cols"}->{$lc}) {
+				$self->error('"%s" column is not exists on join target "%s" table', $left, $jtable);
+				return [];
+			}
+			if (!$self->{"$jt.unique"}->{$rc}) {
+				$ROBJ->warning('"%s" column is not unique on join target "%s" table', $rc, $jtable);
+			}
+			# $rn=$tn
+
+			#---------------------------------------------
+			# check join columns
+			#---------------------------------------------
+			my %jcols;
+			my $req_all;
+			foreach(@target_cols, @lr_cols, @$sort) {
+				if ($_ !~ /^(\w+)\.(\w+)$/ || $1 ne $jn) { next; }
+
+				if (!$all->{$2}) {
+					$self->error('"%s" column is not exists on join target "%s" table', $_, $jtable);
+					return [];
+				}
+
+				$jcols{$2}=1;
+				if (!$idx->{$2}) { $req_all=1; }
+			}
+			if ($req_all && !$self->{"$jt.load_all"}) {
+				$jdb = $self->load_allrow($jt);
+			}
+
+			#---------------------------------------------
+			# join
+			#---------------------------------------------
+			my %h;
+			foreach(@$jdb) {
+				$h{$_->{$rc}}=$_;
+			}
+			my $mapfunc = "sub {\n\tmy (\$x,\$y)=\@_;\n";
+			foreach(keys(%jcols)) {	# need columns for search and sort
+				$mapfunc .= "\t\$x->{'$jn.$_'}=\$y->{$_};\n";
+			}
+			$mapfunc .= '}';
+			my $func = $self->eval_and_cache($mapfunc);
+
+			my $map = {};
+			my $lcol= $ln eq $tname ? $lc : $left;
+			foreach(@$db) {
+				my $z = $h{$_->{$lcol}};
+				$map->{$_->{pkey}} = $z;
+				&$func($_, $z);
+			}
+
+			if ($_->{cols}) {
+				$join_keymap{$jn} = $map;
+
+				my $all = $self->{"$jt.cols"};
+				foreach my $col (@{$_->{cols}}) {
+					my ($c,$n) = $col =~ /^(\w+) +(\w+)$/ ? ($1,$2) : ($col,$col);
+					if (!$all->{$c}) {
+						$self->error('"%s" column is not exists on "%s" (for %s)', $c, $jtable, 'LEFT JOIN');
+						return [];
+					}
+					$join_colname{$n} = { tname=>$jn, col=>$c };
+					if (!$self->{"$jt.load_all"} && !$idx->{$c}) {
+						$join_req_all{$jn}=1;
+					}
+				}
+			}
+		}
+	}
+
+	#-----------------------------------------------------------------------
+	# search
+	#-----------------------------------------------------------------------
+	my $read_row_method = %join_keymap ? 'override_by_rowfile' : 'read_rowfile';
+	#
+	# if exists join table, keep joined column in row hash. (keep ex.) j.pkey, j.name
+	#
 	if (@target_cols) {
-		if (my @ary = grep { !$exists_cols->{$_} } @target_cols) {
-			foreach(@ary) {
-				$self->error("Search column '$_' is not exists");
-			}
-			return [];
-		}
-		#---------------------------------------------------------------
-		# リミットとロード処理
-		#---------------------------------------------------------------
-		my $limit;
-		my $do_load_L1 = '';
-		my $do_load_L2 = '';
+		my $req_load_all;
+		foreach(@target_cols) {
+			my ($tn,$c) = $_ =~ /^(\w+)\.(\w+)$/ ? ($1,$2) : ($tname,$_);
 
-		if (!$load_all_data && grep {! $index_cols->{$_}} @target_cols) {
-			# index外カラムの参照
-			$load_all_data = 1;
-			if ($sort_state == 7) {
-				# limit値がある and indexのみでソート可能
-				$do_load_L1 = 1;	# ファイル順次読み込み
+			if ($tn eq $tname && !$load_cols->{$_}) {
+				$req_load_all = 1;
+			}
+
+			my $t=$names{$tn};
+			if (!$t) {
+				$self->error("Column's table name not defined: %s", $_);
+				return [];
+			}
+			if (!$self->{"$t.cols"}->{$c}) {
+				$self->error('"%s" column is not exists on "%s" (for %s)', $c, $t, 'SEARCH');
+				return [];
+			}
+		}
+
+		#---------------------------------------------------------------
+		# load all for search
+		#---------------------------------------------------------------
+		my $load_before_L1 = '';
+		my $load_before_L2 = '';
+		if ($req_load_all) {
+			#
+			# require non index column for search
+			#
+			if ($limit_of_search && !$sort_req_load_all) {
+				#
+				# exists limit and can now sort
+				#
 				$db = [sort $sort_func @$db];
-				$sort_state = 0;
-				$limit = $limit_state;
+				$req_sort = 0;
+
+				$load_before_L1 = 1;
+				if (!(grep {! $load_cols->{$_}} @target_cols_L1)) {
+					$load_before_L1 = '';
+					$load_before_L2 = 1;
+				}
 			} else {
-				# 全ロードする（キャッシュ環境ではキャッシュが効く）
-				$sort_state |= 4;
-				$db = $self->load_allrow($table);
+				# - no limit
+				# - limit and sort with non index column
+				#
+				my $db_all = $self->load_allrow($table);
+				if (%join_keymap) {
+					# override
+					$db = [ map {{ %{$db->[$_]}, %{$db_all->[$_]} }} (0..$#$db) ];
+				} else {
+					$db = $db_all;
+				}
+				$load_cols = $all_cols;
+				$sort_req_load_all = 0;
 			}
-		}
-		if ($do_load_L1 && !(grep {! $index_cols->{$_}} @target_cols_L1)) {
-			$do_load_L1 = '';
-			$do_load_L2 = 1;
 		}
 
 		#---------------------------------------------------------------
-		# Level-1 検索条件
+		# Level 1: non text search
 		#---------------------------------------------------------------
 		my $cond_L1='';
 		my %match_h;
@@ -205,21 +357,20 @@ sub select {
 		if (@target_cols_L1) {
 			my @cond;
 			my $str = $self->{"$table.str"};
-			foreach (@match) {
+			foreach(@match) {
 				my $v = $h->{match}->{$_};
 				if (ref($v) eq 'ARRAY') {
 					$match_h{$_} = { map {$_=>1} @$v };
 					push(@cond, "exists\$match_h->{$_}->{\$_->{$_}}");
 					next;
 				}
-				if ($str->{$_} || $v eq '') {	# $v eq '' はnullデータ
-					# 文字カラム
+				if ($str->{$_} || $v eq '') {	# $v eq '' is null
 					$v =~ s/([\\'])/\\$1/g;
 					push(@cond, "\$_->{$_}eq'$v'");
 					next;
 				}
-				{
-					# 数値カラム
+				if (1) {
+					# numeric
 					$v += 0;
 					if ($v ne $h->{match}->{$_}) { $self->error("'$v' ($_ column) is not number"); return []; }
 					push(@cond, "\$_->{$_}==$v");
@@ -233,12 +384,12 @@ sub select {
 					push(@cond, "!exists\$not_match_h->{$_}->{\$_->{$_}}");
 					next;
 				}
-				if ($str->{$_} || $v eq '') {	# $v eq '' はnullデータ
+				if ($str->{$_} || $v eq '') {	# $v eq '' is null
 					$v =~ s/([\\'])/\\$1/g;
 					push(@cond, "\$_->{$_}ne'$v'");
 					next;
 				}
-				{
+				if (1) {
 					$v += 0;
 					if ($v ne $h->{not_match}->{$_}) { $self->error("'$v' ($_ column) is not number"); return []; }
 					push(@cond, "\$_->{$_}!=$v");
@@ -278,21 +429,21 @@ sub select {
 			}
 
 			$cond_L1 = 'if (!(' . join(' && ', @cond) . ')) { next; }';
-			$self->debug("select '$table' where L1: $cond_L1");	## safe
+			$self->trace("select '$table' where L1: $cond_L1");
 		}
+		$cond_L1 =~ s/->\{((\w+)\.(\w+))\}/$2 eq $tname ? "->{$3}" : "->{'$1'}"/eg;
 
 		#---------------------------------------------------------------
-		# Level-2 検索条件（文字列検索）
+		# Level 2: text search
 		#---------------------------------------------------------------
 		my $cond_L2='';
 		if (@target_cols_L2) {
 			my $words = $h->{search_words} || [];
 			my $not   = $h->{search_not}   || [];
-			my $cols  = $h->{search_cols}  || [];
-			my $match = $h->{search_match} || [];
-			my $equal = $h->{search_equal} || [];
+			my $cols  = $s_cols;	# $h->{search_cols};
+			my $match = $s_match;	# $h->{search_match};
+			my $equal = $s_equal;	# $h->{search_equal};
 
-			# 検索の準備
 			my @cond;
 			foreach(@$words) {
 				my $x = $_ =~ s/([\\\"])/\\$1/rg;
@@ -330,64 +481,64 @@ sub select {
 			}
 
 			$cond_L2 = 'if (!(' . join(' && ', @cond) . ')) { next; }';
-			$self->debug("select '$table' where L1: $cond_L2");	## safe
+			$self->trace("select '$table' where L2: $cond_L2");
 		}
+		$cond_L2 =~ s/->\{((\w+)\.(\w+))\}/$2 eq $tname ? "->{$3}" : "->{'$1'}"/eg;
 
 		#---------------------------------------------------------------
-		# 検索関数生成
+		# make search function
 		#---------------------------------------------------------------
-
-		if ($do_load_L1 || $do_load_L2) {
+		if ($load_before_L1 || $load_before_L2) {
 			$dir =~ s/\\\'//g;
 			$ext =~ s/\\\'//g;
-			my $load = "\$_ = \$self->read_rowfile('$table', \$_);";
-			if ($do_load_L1) { $do_load_L1 = $load; }
-				else     { $do_load_L2 = $load; }
+			my $load = "\$_ = \$self->$read_row_method('$table', \$_);";
+			if ($load_before_L1) { $load_before_L1 = $load; }
+				else         { $load_before_L2 = $load; }
 		}
-		if ($limit) {
-			$limit = "if(\$#newary >= $limit) { last; }";
+		my $limit_check='';
+		if ($limit_of_search) {
+			my $x = $limit_of_search-1;
+			$limit_check = "if (\$#newary >= $x) { last; }";
 		}
 		my $func=<<FUNCTION_TEXT;
-		sub {
-			my (\$self, \$db, \$match_h, \$not_match_h) = \@_;
-			my \@newary;
-			foreach(\@\$db) {
-				$do_load_L1
-				$cond_L1
-				$do_load_L2
-				$cond_L2
-				push(\@newary, \$_);
-				$limit
-			}
-			return \\\@newary;
-		}
+sub {
+	my (\$self, \$db, \$match_h, \$not_match_h) = \@_;
+	my \@newary;
+	foreach(\@\$db) {
+		$load_before_L1
+		$cond_L1
+		$load_before_L2
+		$cond_L2
+		push(\@newary, \$_);
+		$limit_check
+	}
+	return \\\@newary;
+}
 FUNCTION_TEXT
-		## $ROBJ->debug("[$table]" . $func =~ s/\t/　　/rg);
+		if ($self->{TRACE}) { $func =~ s/\t+\n//g; }
 
-		# 検索関数のコンパイルと実行
 		$func = $self->eval_and_cache($func);
 		$db = &$func($self, $db, \%match_h, \%not_match_h);
 
-	} else {
-		# 内部データを破壊しないためのコピー生成
-		my @newary = @$db;
-		$db = \@newary;
+	} elsif ($db eq $db_orig) {
+		# copy for save interrnal table data
+		$db = [ my @newary = @$db ];
 	}
 	if ($#$db < 0) { return []; }
 
 	#-----------------------------------------------------------------------
-	# まだソートされてなければソートする
+	# sort
 	#-----------------------------------------------------------------------
-	if ($sort_state) {
-		if (!$load_all_data && !($sort_state & 4)) {
-			$load_all_data = 1;
-			$db = [ map { $self->read_rowfile($table, $_) } @$db ];
+	if ($req_sort) {
+		if ($sort_req_load_all) {
+			$db = [ map { $self->$read_row_method($table, $_) } @$db ];
+			$load_cols = $all_cols;
 		}
 		$db = [sort $sort_func @$db];
 	}
 
 	#-----------------------------------------------------------------------
-	# 該当件数を記録
+	# save hits
 	#-----------------------------------------------------------------------
 	my $hits = $#$db +1;
 
@@ -395,31 +546,63 @@ FUNCTION_TEXT
 	# limit and offset
 	#-----------------------------------------------------------------------
 	if ($h->{offset} ne '') {
-		splice(@$db, 0, $h->{offset});
+		splice(@$db, 0, int($h->{offset}));
 	}
 	if ($h->{limit} ne '') {
 		splice(@$db, int($h->{limit}));
 	}
 
 	#-----------------------------------------------------------------------
-	# all data load? / index 外のカラムが必要?
+	# all data load?
 	#-----------------------------------------------------------------------
-	if (!$load_all_data) {
-		my $cols = $sel_cols;
-		if (!$cols) { $cols = [ keys(%$exists_cols) ]; }
-		if (grep { !$index_cols->{$_} } @$cols) {
+	if ($load_cols ne $all_cols) {
+		my $cols = $sel_cols || [ keys(%{$self->{"$table.cols"}}) ];
+		if (grep { !$load_cols->{$_} } @$cols) {
 			foreach(@$db) {
-				$_ = $self->read_rowfile($table, $_);
+				$_ = $self->$read_row_method($table, $_);
 			}
 		}
 	}
 
 	#-----------------------------------------------------------------------
-	# コピー生成
+	# join or make copy
 	#-----------------------------------------------------------------------
-	# 各配列要素の hashref を破壊しないためコピー生成
-	if ($sel_cols) {
-		my $func='sub { my $db = shift; foreach(@$db) {';
+	if (%join_keymap) {	# with join columns
+		my $func = "sub {\n" . 'my ($self,$db,$map)=@_;' . "\n";
+		foreach(keys(%join_keymap)) {		# $_ = table name
+			$func .= "my \$m$_=\$map->{$_};\n";
+		}
+		$func .= 'foreach(@$db) {';
+		$func .= 'my $pkey=$_->{pkey};' . "\n";
+
+		foreach(keys(%join_req_all)) {			# require non index data
+			$func .= "\$m$_\->{\$pkey} &&= \$self->read_rowfile('$names{$_}', \$m$_\->{\$pkey});\n";
+		}
+		if (!$sel_cols) {
+			$func .= "delete \$_->{'*'};\n";	# if exists join $db is deep copy,
+		}						# therfore can break data.
+		$func .= '$_ = {' . "\n";
+		if ($sel_cols) {
+			foreach(@$sel_cols) {
+				$func .= "$_=>\$_->{$_},\n";
+			}
+		} else {
+			$func .= "\%\$_,\n";
+		}
+		foreach(keys(%join_colname)) {
+			my $x  = $join_colname{$_};
+			my $tn = $x->{tname};			# table name
+			my $c  = $x->{col};
+			$func .= "$_=>\$m$tn\->{\$pkey}->{$c},\n";
+		}
+		chop($func); chop($func);
+
+		$func .= "\n}}}";
+		$func = $self->eval_and_cache($func);
+		&$func($self, $db, \%join_keymap);
+
+	} elsif ($sel_cols) {
+		my $func="sub {\n" . 'my $db = shift; foreach(@$db) {';
 		$func .= '$_ = {';
 		foreach(@$sel_cols) {
 			$func .= "$_=>\$_->{$_},"
@@ -436,55 +619,114 @@ FUNCTION_TEXT
 		}
 	}
 
-	return $require_hits ? ($db,$hits) : $db;
+	return wantarray ? ($db,$hits) : $db;
+}
+
+
+################################################################################
+# subrotine for select
+################################################################################
+#-------------------------------------------------------------------------------
+# check select table name
+#-------------------------------------------------------------------------------
+sub parse_table_name {
+	my $self = shift;
+	my $tbl  = shift;
+	my $names= shift;
+	if ($tbl =~ /^(\w+) +(\w+)$/) {
+		return ($1, $2);
+	}
+	$tbl =~ s/\W//g;
+	return ($tbl, $tbl);
+}
+
+#-------------------------------------------------------------------------------
+# generate order by function
+#-------------------------------------------------------------------------------
+sub generate_sort_func {
+	my ($self, $table, $h, $tname) = @_;
+	my @sort = ref($h->{sort}    ) ? @{$h->{sort}    } : ($h->{sort}     eq '' ? () : ($h->{sort}    ));
+	my @rev  = ref($h->{sort_rev}) ? @{$h->{sort_rev}} : ($h->{sort_rev} eq '' ? () : ($h->{sort_rev}));
+	my $cols   = $self->{"$table.cols"};
+	my $is_str = $self->{"$table.str"};
+	my @cond;
+	foreach(0..$#sort) {
+		my $col = $sort[$_];
+		my $rev = $rev [$_];
+		if (ord($col) == 0x2d) {	# '-colname'
+			$col = $sort[$_] = substr($col, 1);
+			$rev = 1;
+		}
+		$col =~ s/[^\w\.]//g;
+		if ($col eq '') { next; }
+		if ($col =~ /^(\w+)\.(\w+)$/ && $1 eq $tname) {
+			$col = $sort[$_] = $2;
+		}
+
+		my $op = $is_str->{$col} ? 'cmp' : '<=>';
+		if ($col =~ /\./) { $col = "'$col'"; }
+		push(@cond, $rev ? "\$b->{$col}$op\$a->{$col}" : "\$a->{$col}$op\$b->{$col}");
+	}
+	my $func = sub { 1; };
+	if (@cond) {
+		$func = 'sub{'. join('||',@cond) .'}';
+		$func = $self->eval_and_cache($func);
+	}
+
+	return wantarray ? ($func, \@sort) : $func;
 }
 
 ################################################################################
-# ■サブルーチン
+# load table data functions
 ################################################################################
 #-------------------------------------------------------------------------------
-# ●index のロード
+# load table index with table infomation
 #-------------------------------------------------------------------------------
+sub load_index_for_edit {
+	my ($self, $table) = @_;
+	return $self->load_index($table, 1);
+}
 sub load_index {
-	my ($self, $table, $edit_flag) = @_;
+	my ($self, $table, $edit) = @_;
 	my $ROBJ = $self->{ROBJ};
 
-	if (! $edit_flag && defined $self->{"$table.tbl"}) {
+	if (! $edit && defined $self->{"$table.tbl"}) {
 		return $self->{"$table.tbl"};
 	}
-	$self->debug("load index on '$table' table".($edit_flag ? ' (edit)':''));	## safe
+	$self->trace("load index on '$table' table".($edit ? ' (edit)':''));
 
-	# ロード準備
+	# prepare
 	my $dir   = $self->{dir} . $table . '/';
 	my $index = $dir . $self->{index_file};
 	if (!-e $index) {
-		if (-e $dir) { $self->index_rebuild( $table ); }
+		if (-e $dir) { $self->rebuild_index( $table ); }
 		else {
 			$self->error("Table '$table' not found!");
 			return;
 		}
 	}
 
-	# ロード
+	# load file
 	my ($fh, $lines);
-	if ($edit_flag) {
-		# 編集モード
+	if ($edit) {
 		my $opt={};
 		if ($self->{begin}) {
-			# 既にトランザクション処理をしてる
+			# A transaction has already started on this table
 			if ($self->{transaction}->{$table}) {
 				return $self->{"$table.tbl"};
 			}
-			# トランザクションは bakupfile を write_lock する
-			my $fh = $ROBJ->file_lock($dir . $self->{index_backup_file}, 'write_lock_nb' );
+			# Start transaction. Lock "#index.backup.dat"
+			my $fh = $ROBJ->file_lock($dir . $self->{index_backup}, 'write_lock_nb' );
 			if (!$fh) {
-				# 別のトランザクションが既に lock していたらエラー終了
-				# ※「開放待ち」はデッドロックの可能性があるので終了する
+				# If another transaction already has the lock,
+				# this transaction will result in an error.
+				# DO NOT WAIT FOR LOCKS to prevent deadlocks.
 				return undef;
 			}
 			$self->{"$table.lock-tr"} = $fh;
 			$self->{transaction}->{$table}=1;
-			# indexファイルは編集されないようにReadlock（読み込みはブロックしない）
+
+			# Lock the index file to prevent it from being edited.
 			$opt->{read_lock}=1;
 		}
 		($fh, $lines) = $ROBJ->fedit_readlines($index, $opt);
@@ -499,42 +741,43 @@ sub load_index {
 		if ($#$lines < 0) { return undef; }
 	}
 
-	# 改行コード除去
-	# map { s/[\r\n]//g; } @$lines;
-	map { chop($_) } @$lines;	# 正規表現よりchompよりchopが速い
+	# delete "\n"
+	map { chop($_) } @$lines;
 
-	# データ解析
-	# 1行目 = DBファイルのVersion番号
+	# LINE 01: DB file Version
 	my $version = $self->{"$table.version"} = int(shift(@$lines));	# Version
-	# 2行目 = ランダム値
+
+	# LINE 02: Random string
 	my $random;
-	if ($version > 3) {	# Ver4以降のみ存在
+	if ($version > 3) {	# Exists since Ver4
 		$random = $self->{"$table.rand"} = shift(@$lines);
-	} else {		# last modofied で代用
+	} else {		# Substitute with last modofied
 		$random = $ROBJ->get_lastmodified($index);
-		shift(@$lines);	# index only flagを読み捨て
+		shift(@$lines);	# Read off index only flag
 	}
-	# 3行目 = シリアル値
+
+	# LINE 03: Serial number for pkey (current max)
 	$self->{"$table.serial"} = int(shift(@$lines));
-	# 4行目 = 全カラム名
+	# LINE 04: all colmuns
 	my @allcols = split(/\t/, shift(@$lines));
 	$self->{"$table.cols"} = { map { $_ => 1} @allcols };
-	# 5行目 = 数値カラム名
+	# LINE 05: integer columns
 	$self->{"$table.int"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-	# 6行目 = floatカラム名
-	if ($version > 3) {	# Ver4以降のみ存在
+	# LINE 06: float columns
+	if ($version > 3) {
 		$self->{"$table.float"}= { map { $_ => 1} split(/\t/, shift(@$lines)) };
 	} else {
 		$self->{"$table.float"} = {};
 	}
-	# 7行目 = flagカラム名
+	# LINE 07: flag(boolean) columns
 	$self->{"$table.flag"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-	if ($version > 3) {	# Ver4以降のみ存在
-		# 8行目 = 文字列カラム
+
+	if ($version > 3) {
+		# LINE 08: string columns
 		$self->{"$table.str"}     = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-		# 9行目 = UNQUEカラム
+		# LINE 09: UNQUE columns
 		$self->{"$table.unique"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-		#10行目 = NOT NULLカラム
+		# LINE 10: NOT NULL columns
 		$self->{"$table.notnull"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };
 	} else {
 		my %cols = %{ $self->{"$table.cols"} };
@@ -543,21 +786,21 @@ sub load_index {
 		$self->{"$table.unique"}  = { pkey=>1 };
 		$self->{"$table.notnull"} = { pkey=>1 };
 	}
-	if ($version > 4) {	# Ver5以降のみ存在
-		#11行目 = defaultカラム
+	if ($version > 4) {
+		# LINE 11: default values
 		my @ary  = split(/\t/, shift(@$lines));
 		$self->{"$table.default"} = { map { $_ => shift(@ary) } @allcols };
 	}
-	# 12行目 = indexカラム名
+	# LINE 12: index columns
 	my @idx_cols = split(/\t/, shift(@$lines));
 	$self->{"$table.idx"} = { map { $_ => 1} @idx_cols };
 
-	# キャッシュの確認。ランダム値を見て書き換えを検出する。
+	# check cache
 	if ($IndexCache{"$table.rand"} eq $random) {
 		$self->{"$table.load_all"} = $IndexCache{"$table.load_all"};
 		return ($self->{"$table.tbl"} = $IndexCache{$table});
 	}
-	# キャッシュを消す
+	# clear cahce
 	if( exists($IndexCache{$table}) ) { $self->clear_cache($table); }
 
 	my $parse_func='sub{return{ ';	# last space for chop()
@@ -570,45 +813,53 @@ sub load_index {
 	$parse_func.='}}';
 	$parse_func = $self->eval_and_cache($parse_func);
 
-	### 【メモ】全体を関数化するよりこの方が速い
-	### $ROBJ->{Timer}->start('x2');
+	# index data parse loop
 	foreach(@$lines) {
 		$_ = &$parse_func(split("\t", $_));
 	}
-	### $ROBJ->debug("[$table] " . $#$lines . " lines parse = ".int($ROBJ->{Timer}->stop('x2')*10000+0.5)/10 ."ms");
 
-	$self->{"$table.tbl"} = $lines;		# table 内容保存
-	$IndexCache{$table}  = $lines;		# キャッシュ保存
+	$self->{"$table.tbl"} = $lines;		# save table data
+	$IndexCache{$table}   = $lines;		# save cache
 	$IndexCache{"$table.rand"} = $random;
 	return $lines;
 }
 
 #-------------------------------------------------------------------------------
-# ●１カラムのデータロード
+# load row data file
 #-------------------------------------------------------------------------------
 sub read_rowfile {
-	my $self = shift;
-	my ($table, $h) = @_;
-	if ($h->{'*'}) { return $h; }	# ロード済
+	my ($self, $table, $h) = @_;
+	if ($h->{'*'}) { return $h; }	# loaded flag
 	my $ROBJ = $self->{ROBJ};
 
 	my $ext = $self->{ext};
 	my $dir = $self->{dir} . $table . '/';
 	my $h = $ROBJ->fread_hash_cached($dir . sprintf($FileNameFormat, $h->{pkey}). $ext);
-	$h->{'*'}=1;	# ロード済フラグ
+	$h->{'*'}=1;			# loaded flag
 	return $h;
 }
 
+sub override_by_rowfile {		# keep original hash data
+	my ($self, $table, $h) = @_;
+	if ($h->{'*'}) { return $h; }
+	my $ROBJ = $self->{ROBJ};
+
+	my $ext = $self->{ext};
+	my $dir = $self->{dir} . $table . '/';
+	my $x = $ROBJ->fread_hash_cached($dir . sprintf($FileNameFormat, $h->{pkey}). $ext);
+	return { %$h, %$x, '*'=>1 };
+}
+
 #-------------------------------------------------------------------------------
-# ●全データのロード
+# load all row data file
 #-------------------------------------------------------------------------------
 sub load_allrow {
-	my $self = shift;
+	my $self  = shift;
 	my $table = shift;
-	my $ROBJ = $self->{ROBJ};
+	my $ROBJ  = $self->{ROBJ};
 	if ($self->{"$table.load_all"}) { return $self->{"$table.tbl"}; }
 
-	$self->debug("load all data on '$table' table");	## safe
+	$self->trace("load all data on '$table'");
 	my $ext = $self->{ext};
 	my $dir = $self->{dir} . $table . '/';
 	$self->{"$table.tbl"} = [ map { $self->read_rowfile($table, $_) } @{$self->{"$table.tbl"}} ];
@@ -617,51 +868,11 @@ sub load_allrow {
 	return ($IndexCache{$table} = $self->{"$table.tbl"});
 }
 
+################################################################################
+# common subroutins
+################################################################################
 #-------------------------------------------------------------------------------
-# ●文字列型かチェックする
-#-------------------------------------------------------------------------------
-sub check_type_str {
-	my ($self, $table, $column) = @_;
-	if (!exists $self->{"$table.tbl"}) {
-		$self->error("%s table not found!", $table);
-	}
-	return $self->{"$table.str"}->{$column};
-}
-
-#-------------------------------------------------------------------------------
-# ●Sort関数の生成 (ORDER BY)
-#-------------------------------------------------------------------------------
-sub generate_sort_func {
-	my ($self, $table, $h) = @_;
-	my $sort = ref($h->{sort}    ) ? $h->{sort}     : ($h->{sort}     eq '' ? [] : [ $h->{sort}     ]);
-	my $rev  = ref($h->{sort_rev}) ? $h->{sort_rev} : ($h->{sort_rev} eq '' ? [] : [ $h->{sort_rev} ]);
-	my $cols   = $self->{"$table.cols"};
-	my $is_str = $self->{"$table.str"};
-	my @cond;
-	foreach(0..$#$sort) {
-		my $col = $sort->[$_];
-		my $rev = $rev->[$_];
-		if (ord($col) == 0x2d) {	# '-colname'
-			$col = $sort->[$_] = substr($col, 1);
-			$rev = 1;
-		}
-		$col =~ s/\W//g;
-		if ($col eq '') { next; }
-
-		my $op = $is_str->{$col} ? 'cmp' : '<=>';
-		push(@cond, $rev ? "\$b->{$col}$op\$a->{$col}" : "\$a->{$col}$op\$b->{$col}");
-	}
-	my $func = sub { 1; };
-	if (@cond) {
-		$func = 'sub{'. join('||',@cond) .'}';
-		$func = $self->eval_and_cache($func);
-	}
-
-	return wantarray ? ($func, $sort) : $func;
-}
-
-#-------------------------------------------------------------------------------
-# ●evalキャッシュ
+# eval and cache
 #-------------------------------------------------------------------------------
 my %function_cache;
 sub eval_and_cache {
@@ -670,10 +881,13 @@ sub eval_and_cache {
 	if (exists $function_cache{$functext}) {
 		return $function_cache{$functext};
 	}
+	# trace
+	if ($self->{TRACE}) { $self->trace('[eval] ' . $functext); }
+
 	# function compile
 	my $func;
 	eval "\$func=$functext";
-	if ($@) { die "[DB_text/eval_and_cache] $@"; }
+	if ($@) { die "[$self->{DBMS}] in eval_and_cache() $@"; }
 	return ($function_cache{$functext} = $func);
 }
 
