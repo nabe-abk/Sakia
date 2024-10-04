@@ -5,7 +5,7 @@ use strict;
 #-------------------------------------------------------------------------------
 #
 package Sakia::Net::MailParser;
-our $VERSION = '1.12';
+our $VERSION = '1.20';
 use Encode;
 ################################################################################
 # base
@@ -49,15 +49,7 @@ sub parse {
 	if ($ctype =~ m|^multipart/(\w+)|i) {
 		$self->{DEBUG} && $ROBJ->debug("*** mail is multipart ***");
 
-		my $mixed = $1 =~ /mixed/i;
-		my @list  = $self->parse_part($ary, $ctype, $outcode);
-		foreach(@list) {
-			if ($mixed && $_->{type} =~ m|multipart/|) {
-				push(@parts, $self->parse_part([ split(/\n/, $_->{data}) ], $_->{type}, $outcode));
-				next;
-			}
-			push(@parts, $_);
-		}
+		@parts = $self->parse_part($ary, $ctype, $outcode);
 
 	} else {
 		#---------------------------------------------------------------
@@ -94,10 +86,17 @@ sub parse {
 	#-----------------------------------------------------------------------
 	# Choice the main text
 	#-----------------------------------------------------------------------
+	my @inline;
 	my @attaches;
+	$mail->{inline}   = \@inline;
 	$mail->{attaches} = \@attaches;
 
 	foreach(@parts) {
+		if ($_->{inline}) {
+			push(@inline, $_);
+			next;
+		}
+
 		if (exists($_->{filename})) {
 			push(@attaches, $_);
 			next;
@@ -127,9 +126,31 @@ sub parse_part {
 	my $self    = shift;
 	my $ary     = shift;
 	my $ctype   = shift;
+	my $outcode = shift;	# outcode
+	my @parts   = $self->do_parse_part($ary, $ctype, $outcode);
+
+	my @ary;
+	foreach(@parts) {
+		#
+		# multipart/alternative is used when "text/plain" and "text/html" in parallel.
+		# multipart/related is used when there is an image file of this html in "text/html".
+		#
+		if ($_->{type} =~ m|multipart/(\w+)|) {
+			push(@ary, $self->parse_part([ split(/\n/, $_->{data}) ], $_->{type}, $outcode));
+			next;
+		}
+		push(@ary, $_);
+	}
+	return @ary;
+}
+
+sub do_parse_part {
+	my $self    = shift;
+	my $ary     = shift;
+	my $ctype   = shift;
 	my $outcode = shift;
 
-	if ($ctype !~ m#^multipart/\w+;\s*boundary=(?:"(.*?)"|([^\s]*))#i) {
+	if ($ctype !~ m!^multipart/\w+;\s*boundary=(?:"(.*?)"|([^\s]*))!i) {
 		return;
 	}
 	my $boundary = "--$1$2";
@@ -143,13 +164,15 @@ sub parse_part {
 		if ($x ne $boundary && $x ne $b2) { next; }
 		while(@$ary) {
 			if ($ary->[0] =~ /^[\r\n]*$/) { shift(@$ary); next; }
-			my $part_h = $self->parse_mail_header($ary, $outcode);
-			my $type   = $part_h->{content_type};
-			my $encode = $part_h->{content_transfer_encoding};
+			my $h      = $self->parse_mail_header($ary, $outcode);
+			my $type   = $h->{content_type};
+			my $dispos = $h->{content_disposition};
+			my $encode = $h->{content_transfer_encoding};
 
 			my $part = {
 				type	=> $type,
-				encode	=> $encode
+				encode	=> $encode,
+				inline	=> $dispos =~ /^\s*inline\b/
 			};
 			push(@parts, $part);
 
@@ -159,9 +182,8 @@ sub parse_part {
 				$part->{filename} = $ct->{name};
 			}
 			# filename from Content-Disposition
-			my $desc = $part_h->{content_disposition};
-			if ($desc) {
-				my $x = $self->parse_header_line( $desc, $outcode );
+			if ($dispos) {
+				my $x = $self->parse_header_line( $dispos, $outcode );
 				if (exists $x->{filename}) {
 					$part->{filename} = $x->{filename};
 				}
