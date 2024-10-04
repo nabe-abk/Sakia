@@ -1,7 +1,7 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Base system for Sakia-System
-#						Copyright(C)2005-2023 nabe@abk
+#						Copyright(C)2005-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base;
 #-------------------------------------------------------------------------------
@@ -947,9 +947,11 @@ sub load_locale {
 	my ($self, $file) = @_;
 	my $h = $self->{MsgTrans} = $self->fread_hash_cached($file);
 
-	$h->{LC_WDAY} && ($self->{LC_WDAY} = [ split(/\s*,\s*/, $h->{LC_WDAY}) ]);
-	$h->{LC_AMPM} && ($self->{LC_AMPM} = [ split(/\s*,\s*/, $h->{LC_AMPM}) ]);
-	$h->{LC_TIMESTAMP} && ($self->{LC_TIMESTAMP} = $h->{LC_TIMESTAMP});
+	$self->{LANG}    = $h->{LANG};
+	$self->{LC_NAME} = $h->{LC_NAME};
+	$self->{LC_WDAY} = [ split(/\s*,\s*/, $h->{LC_WDAY}) ];
+	$self->{LC_AMPM} = [ split(/\s*,\s*/, $h->{LC_AMPM}) ];
+	$self->{LC_TIMESTAMP} = $h->{LC_TIMESTAMP};
 }
 
 sub translate {
