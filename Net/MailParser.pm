@@ -75,7 +75,7 @@ sub parse {
 
 		if ($self->{DEBUG}) {
 			my $msg='';
-			foreach my $t (qw(_type encode charset filename size)) {
+			foreach my $t (qw(_type encode charset filename size inline cid)) {
 				if (!exists($_->{$t})) { next; }
 				$msg .= " $t=$_->{$t}";
 			}
@@ -168,11 +168,13 @@ sub do_parse_part {
 			my $type   = $h->{content_type};
 			my $dispos = $h->{content_disposition};
 			my $encode = $h->{content_transfer_encoding};
+			my $cid    = $h->{content_id} =~ /^<(.+)>$/ ? $1 : undef;
 
 			my $part = {
 				type	=> $type,
 				encode	=> $encode,
-				inline	=> $dispos =~ /^\s*inline\b/
+				inline	=> $dispos =~ /^\s*inline\b/ ? 1 : 0,
+				cid	=> $cid
 			};
 			push(@parts, $part);
 
