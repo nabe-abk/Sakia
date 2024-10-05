@@ -11,12 +11,11 @@ use Encode;
 # base
 ################################################################################
 sub new {
-	my $self = bless({}, shift);
-
-	$self->{ROBJ} = shift;
-	$self->{__CACHE_PM} = 1;
-
-	return $self;
+	my $class= shift;
+	return bless({
+		ROBJ		=> shift,
+		__CACHE_PM	=> 1
+	}, $class);
 }
 
 ################################################################################
@@ -59,7 +58,7 @@ sub parse {
 
 		my $text = join('', @$ary);
 		push(@parts, {
-			main	=> 1,
+			main	=> $ctype !~ m|^text/html|i,
 			type	=> $ctype,
 			data	=> $self->decode_part_body($text, $ctype, $mail->{content_transfer_encoding})
 		});
@@ -67,7 +66,7 @@ sub parse {
 
 	foreach(@parts) {
 		my $type = $_->{type};
-		if ($type =~ m|^text/|) {
+		if ($type =~ m|^text/|i) {
 			$_->{charset} = ($type =~ /;\s*charset="(.*?)"/i || $type =~ /;\s*charset=([^\s;]*)/i) ? $1 : 'UTF-8';
 		}
 		$_->{size}  = length($_->{data});
@@ -86,14 +85,14 @@ sub parse {
 	#-----------------------------------------------------------------------
 	# Choice the main text
 	#-----------------------------------------------------------------------
-	my @inline;
+	my @inlines;
 	my @attaches;
-	$mail->{inline}   = \@inline;
+	$mail->{inlines}  = \@inlines;
 	$mail->{attaches} = \@attaches;
 
 	foreach(@parts) {
 		if ($_->{inline}) {
-			push(@inline, $_);
+			push(@inlines, $_);
 			next;
 		}
 
@@ -110,7 +109,8 @@ sub parse {
 			next;
 		}
 		if (!exists($mail->{html}) && $_->{type} =~ m|text/html|) {
-			$mail->{html} = $_->{data};
+			$mail->{html}         = $_->{data};
+			$mail->{html_charset} = $_->{charset};
 			next;
 		}
 		push(@attaches, $_);
