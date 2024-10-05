@@ -1638,7 +1638,7 @@ sub p2e_function {
 		@ary = grep { $_ ne '' } @ary;
 		while(@ary) {
 			my $a=shift(@ary);
-			my $b=shift(@ary) || '';
+			my $b=shift(@ary) // '';
 			$x .= "$a=>$b,";
 		}
 		chop($x);
