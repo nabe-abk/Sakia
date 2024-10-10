@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2024 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.14';
+our $VERSION = '3.15';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -129,6 +129,8 @@ my %InlineFuncs = (
 	match	=>	{ f=>'#0 =~ m!%1! ? [$&,$1,$2,$3,$4,$5,$6,$7,$8,$9] : undef', arg=>2, min=>'?', max=>'=~' },
 	replace =>	{ f=>'#0 =~ s!%1!%2!rg',arg=>3, min=>'=~', max=>'=~' },
 	replace_dest =>	{ f=>'#0 =~ s!%1!%2!g',	arg=>3, min=>'=~', max=>'=~' },
+	tr =>		{ f=>'#0 =~ tr!%1!%2!r',arg=>3, min=>'=~', max=>'=~' },
+	tr_dest =>	{ f=>'#0 =~ tr!%1!%2!',	arg=>3, min=>'=~', max=>'=~' },
 
 	is_int	=> { f=>'#0 =~ /^-?\d+$/',	arg=>1, min=>'=~', max=>'=~' },
 	is_array=> { f=>"ref(#0) eq 'ARRAY'",	arg=>1, min=>'eq' },
