@@ -1,13 +1,13 @@
 use strict;
 #-------------------------------------------------------------------------------
 # SMTP module
-#						(C)2006-2023 nabe / nabe@abk
+#						(C)2006-2024 nabe / nabe@abk
 #-------------------------------------------------------------------------------
 # Support IPv4 only.
 # Do not send large file.
 #
 package Sakia::Net::SMTP;
-our $VERSION = '1.51';
+our $VERSION = '1.52';
 #-------------------------------------------------------------------------------
 use Socket;
 use Fcntl;
@@ -524,7 +524,7 @@ my @base64ary = (
 sub mime_encode {
 	my $self = shift;
 	foreach(@_) {
-		$_ =~ s/([^\x00-\x7f]+)/ "=?$self->{code}?B?" . $self->base64encode($1) . '?=' /eg;
+		$_ =~ s/([^\x00-\x7f]+)(?:(\s+)(?=[^\x00-\x7f]))?/ "=?$self->{code}?B?" . $self->base64encode($1 . $2) . '?=' /eg;
 	}
 	return $_[0];
 }
