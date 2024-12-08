@@ -54,7 +54,7 @@ sub send_mail {
 	my $to    = $self->check_mail_addresses($h->{to});
 	my $cc    = $self->check_mail_addresses($h->{cc});
 	my $bcc   = $self->check_mail_addresses($h->{bcc});
-	my $from  = $self->check_mail_address($h->{from}) || ($h->{from} =~ /^[\w\_]+$/ ? $h->{from} : undef);
+	my $from  = $self->check_mail_address($h->{from}) || ($h->{from} =~ /^[-\w\.]+$/ ? $h->{from} : undef);
 	my $repto = $self->check_mail_address($h->{reply_to});
 	my $retph = $self->check_mail_address($h->{return_path});
 
