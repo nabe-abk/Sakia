@@ -76,18 +76,19 @@ sub parse_column {
 	}
 	my $sql;
 	my @vals;
-	if    ($h->{type} eq 'int')   { $sql .= "$col INT";     }
-	elsif ($h->{type} eq 'float') { $sql .= "$col FLOAT";   }
-	elsif ($h->{type} eq 'flag')  { $sql .= "$col BOOLEAN"; }
-	elsif ($h->{type} eq 'text')  { $sql .= "$col TEXT";    }
-	elsif ($h->{type} eq 'ltext') { $sql .= "$col TEXT";    }
+	if    ($h->{type} eq 'int')    { $sql .= "$col INT";     }
+	elsif ($h->{type} eq 'float')  { $sql .= "$col FLOAT";   }
+	elsif ($h->{type} eq 'flag')   { $sql .= "$col BOOLEAN"; }
+	elsif ($h->{type} eq 'boolean'){ $sql .= "$col BOOLEAN"; }
+	elsif ($h->{type} eq 'text')   { $sql .= "$col TEXT";    }
+	elsif ($h->{type} eq 'ltext')  { $sql .= "$col TEXT";    }
 	else {
 		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
 		return;
 	}
 	if ($h->{unique})   { $sql .= ' UNIQUE';   }
 	if ($h->{not_null}) { $sql .= ' NOT NULL'; }
-	if (exists($h->{default})) {
+	if ($h->{default} ne '') {
 		$sql .= " DEFAULT ?";
 		push(@vals, $h->{default});
 	}

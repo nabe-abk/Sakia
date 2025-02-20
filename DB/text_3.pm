@@ -18,45 +18,9 @@ sub create_table {
 	$table =~ tr/A-Z/a-z/;
 	if ($table eq '') { $self->error('Called create_table() with null table name'); return 9; }
 
-	# parse table
-	my %cols         = ('pkey'=>1);
-	my %index_cols   = ('pkey'=>1);
-	my %int_cols     = ('pkey'=>1);
-	my %float_cols;
-	my %flag_cols;
-	my %str_cols;
-	my %unique_cols  = ('pkey'=>1);
-	my %notnull_cols = ('pkey'=>1);
-	my %default;
-	foreach(@$colums) {
-		my $col = $_->{name};
-		$col =~ s/\W//g;
-		if ($col eq '') { next; }
-
-		if (exists $cols{$col}) {
-			$self->error("Column %s is dupulicate or 'pkey' is not allow", $table, $col);
-			return 10;
-		}
-		$cols{$col}=1;	# *** if you change this, also change add_column() ***
-		if    ($_->{type} eq 'int')   { $int_cols  {$col}=1; }
-		elsif ($_->{type} eq 'float') { $float_cols{$col}=1; }
-		elsif ($_->{type} eq 'flag')  { $flag_cols {$col}=1; }
-		elsif ($_->{type} eq 'text')  { $str_cols  {$col}=1; }
-		elsif ($_->{type} eq 'ltext') { $str_cols  {$col}=1; }
-		else {
-			$self->error('Column "%s" have invalid type "%s"', $col, $_->{type});
-			return 20;
-		}
-		if ($_->{unique})        { $unique_cols {$col}=1; }
-		if ($_->{not_null})      { $notnull_cols{$col}=1; }
-		if ($_->{default} ne '') { $default{$col} = $_->{default}; }
-
-		# if UNIQUE set index
-		if ($_->{index} || $_->{index_tdb} || $_->{unique}) {
-			$index_cols{$col}=1;
-		}
-	}
-
+	#--------------------------------------------------
+	# check table name
+	#--------------------------------------------------
 	my $dir = $self->{dir} . $table . '/';
 	if (!-e $dir) {
 		if (!$ROBJ->mkdir($dir)) { $self->error("mkdir '$dir' error : $!"); }
@@ -71,20 +35,73 @@ sub create_table {
 		return 40;
 	}
 
-	$self->{"$table.tbl"}     = [];			# table array ref
-	$self->{"$table.cols"}    = \%cols;		# all
-	$self->{"$table.idx"}     = \%index_cols;	# index
-	$self->{"$table.int"}     = \%int_cols;		# integer
-	$self->{"$table.float"}   = \%float_cols;	# number
-	$self->{"$table.flag"}    = \%flag_cols;	# flag(boolean)
-	$self->{"$table.str"}     = \%str_cols;		# string
-	$self->{"$table.unique"}  = \%unique_cols;	# UNIQUE
-	$self->{"$table.notnull"} = \%notnull_cols;	# NOT NULL
-	$self->{"$table.default"} = \%default;		# Default value
+	#--------------------------------------------------
+	# parse columns
+	#--------------------------------------------------
+	$self->{"$table.cols"}    = { 'pkey'=>1 };	# all
+	$self->{"$table.idx"}     = { 'pkey'=>1 };	# index
+	$self->{"$table.int"}     = { 'pkey'=>1 };	# integer
+	$self->{"$table.float"}   = {};			# number
+	$self->{"$table.flag"}    = {};			# flag(boolean)
+	$self->{"$table.str"}     = {};			# string
+	$self->{"$table.unique"}  = { 'pkey'=>1 };	# UNIQUE
+	$self->{"$table.notnull"} = { 'pkey'=>1 };	# NOT NULL
+	$self->{"$table.default"} = {};			# Default value
 	$self->{"$table.serial"}  = 0;
+
+	foreach(@$colums) {
+		my $err = $self->parse_column($table, $_);
+		if ($err) {
+			return $err;
+		}
+	}
+
+	$self->{"$table.tbl"} = [];	# table array ref, save table exists
 
 	$self->save_index($table);
 	$self->save_backup_index($table);
+
+	return 0;
+}
+
+sub parse_column {
+	my $self = shift;
+	my $table= shift;
+	my $h    = shift;
+
+	my $col = $h->{name};
+	$col =~ s/\W//g;
+	if ($col eq '') {
+		$self->error('Illegal column name: %s', $col);
+		return 7;
+	}
+
+	# check column name
+	my $cols = $self->{"$table.cols"};
+	if ($cols->{$col}) {
+		$self->error("Column '%s' is already exists in table '%s'", $col, $table);
+		return 8;
+	}
+	# column info
+	if    ($h->{type} eq 'int')   { $self->{"$table.int"}  ->{$col}=1; }
+	elsif ($h->{type} eq 'float') { $self->{"$table.float"}->{$col}=1; }
+	elsif ($h->{type} eq 'flag')  { $self->{"$table.flag"} ->{$col}=1; }
+	elsif ($h->{type} eq 'boolean'){$self->{"$table.flag"} ->{$col}=1; }
+	elsif ($h->{type} eq 'text')  { $self->{"$table.str"}  ->{$col}=1; }
+	elsif ($h->{type} eq 'ltext') { $self->{"$table.str"}  ->{$col}=1; }
+	else {
+		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
+		return 10;
+	}
+	$self->{"$table.cols"}->{$col}=1;
+	if ($h->{unique})  { $self->{"$table.unique"} ->{$col}=1; }	# UNIQUE
+	if ($h->{notnull}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
+	if ($h->{index} || $h->{index_tbl} || $h->{unique}) {
+		$self->{"$table.idx"}->{$col}=1;
+	}
+	if ($h->{default} ne '') {
+		$self->{"$table.default"}->{$col} = $h->{default};
+	}
 
 	return 0;
 }
@@ -184,6 +201,7 @@ sub add_column {
 	if    ($h->{type} eq 'int')   { $self->{"$table.int"}  ->{$col}=1; }
 	elsif ($h->{type} eq 'float') { $self->{"$table.float"}->{$col}=1; }
 	elsif ($h->{type} eq 'flag')  { $self->{"$table.flag"} ->{$col}=1; }
+	elsif ($h->{type} eq 'boolean'){$self->{"$table.flag"} ->{$col}=1; }
 	elsif ($h->{type} eq 'text')  { $self->{"$table.str"}  ->{$col}=1; }
 	elsif ($h->{type} eq 'ltext') { $self->{"$table.str"}  ->{$col}=1; }
 	else {

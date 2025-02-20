@@ -101,13 +101,14 @@ sub select {
 	#-----------------------------------------------------------------------
 	# load conditions data
 	#-----------------------------------------------------------------------
+	my $flags = $h->{flag} || $h->{boolean};
 	my @match    = sort( keys(%{ $h->{match}     }) );
 	my @not_match= sort( keys(%{ $h->{not_match} }) );
 	my @min      = sort( keys(%{ $h->{min}       }) );
 	my @max      = sort( keys(%{ $h->{max}       }) );
 	my @gt       = sort( keys(%{ $h->{gt}        }) );
 	my @lt       = sort( keys(%{ $h->{lt}        }) );
-	my @flag     = sort( keys(%{ $h->{flag}      }) );
+	my @flag     = sort( keys(%{ $flags          }) );
 	my $is_null  = $h->{is_null}      || [];
 	my $not_null = $h->{not_null}     || [];
 	my $s_cols   = $h->{search_cols}  || [];
@@ -397,7 +398,7 @@ sub select {
 				}
 			}
 			foreach (@flag) {
-				my $v = $h->{flag}->{$_};
+				my $v = $flags->{$_};
 				if ($v ne '0' && $v ne '1') { $self->error("'$v' ($_ column) is not flag(allowd '1' or '0')"); return []; }
 				push(@cond, "\$_->{$_}==$v");
 			}

@@ -240,40 +240,41 @@ sub generate_select_where {
 		push(@ary, @$v);
 	};
 
-	foreach(sort(keys(%{ $h->{match} }))) {
+	foreach(keys(%{ $h->{match} })) {
 		&$match($_, $h->{match}->{$_});
 	}
-	foreach(sort(keys(%{ $h->{not_match} }))) {
+	foreach(keys(%{ $h->{not_match} })) {
 		&$match($_, $h->{not_match}->{$_}, ' not');
 	}
-	foreach(sort(keys(%{ $h->{min} }))) {
+	foreach(keys(%{ $h->{min} })) {
 		my $k = $_;
 		$k =~ s/[^\w\.]//g;
 		$where .= " AND $k>=?";
 		push(@ary, $h->{min}->{$_});
 	}
-	foreach(sort(keys(%{ $h->{max} }))) {
+	foreach(keys(%{ $h->{max} })) {
 		my $k = $_;
 		$k =~ s/[^\w\.]//g;
 		$where .= " AND $k<=?";
 		push(@ary, $h->{max}->{$_});
 	}
-	foreach(sort(keys(%{ $h->{gt} }))) {
+	foreach(keys(%{ $h->{gt} })) {
 		my $k = $_;
 		$k =~ s/[^\w\.]//g;
 		$where .= " AND $k>?";
 		push(@ary, $h->{gt}->{$_});
 	}
-	foreach(sort(keys(%{ $h->{lt} }))) {
+	foreach(keys(%{ $h->{lt} })) {
 		my $k = $_;
 		$k =~ s/[^\w\.]//g;
 		$where .= " AND $k<?";
 		push(@ary, $h->{lt}->{$_});
 	}
-	foreach(sort(keys(%{ $h->{flag} }))) {
+	my $flags = $h->{flag} || $h->{boolean};
+	foreach(keys(%$flags)) {
 		my $k = $_;
 		$k =~ s/[^\w\.]//g;
-		$where .= " AND " . ($h->{flag}->{$_} ? '' : 'not ') . $k;
+		$where .= " AND " . ($flags->{$_} ? '' : 'not ') . $k;
 	}
 	foreach(@{ $h->{is_null} }) {
 		$_ =~ s/[^\w\.]//g;

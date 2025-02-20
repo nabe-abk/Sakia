@@ -87,14 +87,17 @@ sub parse_column {
 		return;
 	}
 
-	my $sql;
+	my $sql  ='';
+	my $check='';
 	my @vals;
-	my $check;
 	my $is_text;
 
 	if    ($h->{type} eq 'int')   { $sql .= "$col INT";    }
 	elsif ($h->{type} eq 'float') { $sql .= "$col FLOAT";  }
-	elsif ($h->{type} eq 'flag')  { $sql .= "$col TINYINT"; $check=" CHECK($col=0 OR $col=1)"; }
+	elsif ($h->{type} eq 'flag' || $h->{type} eq 'boolean') {
+		$sql .= "$col TINYINT";
+		$check=" CHECK($col=0 OR $col=1)";
+	}
 	elsif ($h->{type} eq 'text')  {
 		if ($h->{unique})     { $sql .= "$col VARCHAR(" . int($self->{unique_text_size} || 256) .")"; }
 	          else                { $sql .= "$col TEXT"; $is_text=1; }
@@ -106,7 +109,7 @@ sub parse_column {
 	}
 	if ($h->{unique})   { $sql .= ' UNIQUE';   }
 	if ($h->{not_null}) { $sql .= ' NOT NULL'; }
-	if (exists($h->{default})) {
+	if ($h->{default} ne '') {
 		$sql .= " DEFAULT ?";
 		push(@vals, $h->{default});
 	}
