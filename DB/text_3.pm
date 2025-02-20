@@ -83,12 +83,13 @@ sub parse_column {
 		return 8;
 	}
 	# column info
-	if    ($h->{type} eq 'int')   { $self->{"$table.int"}  ->{$col}=1; }
-	elsif ($h->{type} eq 'float') { $self->{"$table.float"}->{$col}=1; }
-	elsif ($h->{type} eq 'flag')  { $self->{"$table.flag"} ->{$col}=1; }
-	elsif ($h->{type} eq 'boolean'){$self->{"$table.flag"} ->{$col}=1; }
-	elsif ($h->{type} eq 'text')  { $self->{"$table.str"}  ->{$col}=1; }
-	elsif ($h->{type} eq 'ltext') { $self->{"$table.str"}  ->{$col}=1; }
+	if    ($h->{type} eq 'int')    { $self->{"$table.int"}  ->{$col}=1; }
+	elsif ($h->{type} eq 'bigint') { $self->{"$table.int"}  ->{$col}=1; }	# work on 64bit perl
+	elsif ($h->{type} eq 'float')  { $self->{"$table.float"}->{$col}=1; }
+	elsif ($h->{type} eq 'flag')   { $self->{"$table.flag"} ->{$col}=1; }
+	elsif ($h->{type} eq 'boolean'){ $self->{"$table.flag"} ->{$col}=1; }
+	elsif ($h->{type} eq 'text')   { $self->{"$table.str"}  ->{$col}=1; }
+	elsif ($h->{type} eq 'ltext')  { $self->{"$table.str"}  ->{$col}=1; }
 	else {
 		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
 		return 10;

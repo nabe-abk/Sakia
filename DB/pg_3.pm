@@ -77,6 +77,7 @@ sub parse_column {
 	my $sql;
 	my @vals;
 	if    ($h->{type} eq 'int')    { $sql .= "$col INT";     }
+	elsif ($h->{type} eq 'bigint') { $sql .= "$col BIGINT";  }
 	elsif ($h->{type} eq 'float')  { $sql .= "$col FLOAT";   }
 	elsif ($h->{type} eq 'flag')   { $sql .= "$col BOOLEAN"; }
 	elsif ($h->{type} eq 'boolean'){ $sql .= "$col BOOLEAN"; }
