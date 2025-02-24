@@ -100,8 +100,8 @@ sub parse_column {
 		$check=" CHECK($col=0 OR $col=1)";
 	}
 	elsif ($h->{type} eq 'text') {
-		if ($h->{unique})     { $sql .= "$col VARCHAR(" . int($self->{unique_text_size} || 256) .")"; }
-	          else                { $sql .= "$col TEXT"; $is_text=1; }
+	  if ($h->{unique} || $h->{ref}){ $sql .= "$col VARCHAR(" . int($self->{unique_text_size} || 255) .")"; }
+		else			{ $sql .= "$col TEXT"; $is_text=1; }
 	}
 	elsif ($h->{type} eq 'ltext') { $sql .= "$col MEDIUMTEXT"; }
 	else {
