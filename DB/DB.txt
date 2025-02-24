@@ -55,9 +55,10 @@ DB_text.index_file		インデックスファイル名標準 ("#index.dat")
 ■カラムの型
 ################################################################################
 int	整数（32bit）
+bigint	整数（64bit）
 float	小数
 flag	フラグ(0 or 1)
-boolean	フラグの別名。
+boolean	フラグの別名
 text	テキスト
 ltext	大きいテキスト(64KB超え)
 
@@ -354,24 +355,52 @@ Ret:
 ================================================================================
 ●テーブルの作成
 ================================================================================
-$r = $DB->create_table_wrapper($table, \%h);
+$r = $DB->create_table_wrapper($table, $info);
+$r = $DB->create_table_wrapper($table, $info, \@columns);
 
-　より簡易なインターフェイスでテーブルを作成するための wrapper。
+　簡易なインターフェイスでテーブルを作成する wrapper。
+
+	$info		テキストまたはテキストを行分割した配列ハッシュ。
+	@colums		create_tableと同一。$infoに追加で設定。
 
 （例）
-	my %cols;
-	$cols{text}    = [ qw(id name pass info) ];
-	$cols{ltext}   = [ qw(largetext) ];
-	$cols{int}     = [ qw(regist_tm update_tm login_count login_tm fail_count fail_tm) ];
-	$cols{float}   = [ qw(float_number) ];
-	$cols{flag}    = [ qw(disable isadmin) ];
-	$cols{idx}     = [ qw(id regist_tm isadmin) ];
-	$cols{idx_tdb} = [ qw(id regist_tm isadmin) ];
-	$cols{unique}  = [ qw(id) ];
-	$cols{notnull} = [ qw(id name) ];
-	$cols{ref}     = { id   => "id_xxx_table.id" };
-	$cols{default} = { info => "a@b.c" };
-	my $r = $DB->create_table_wrapper($table, \%cols);
+	$DB->create_table_wrapper('usr', <<INFO);
+		pkey		serial PRIMARY KEY		# not change
+
+		id		text NOT NULL UNIQUE
+		name		text NOT NULL			# display name
+		pass		text NOT NULL			# crypted
+		email		text UNIQUE
+
+		login_c		int NOT NULL DEFAULT 0		# login count
+		login_tm	bigint				# last login time (UTC)
+		fail_c		int NOT NULL DEFAULT 0		# login fail count (clear on success)
+		fail_tm		bigint				# last failed time (UTC)
+		disable		flag NOT NULL 			# account is disabled
+		isadmin		flag NOT NULL			# account is admin
+
+		INDEX		id
+		INDEX		email
+		INDEX		isadmin
+INFO
+	$DB->create_table_wrapper("usr_sid", <<INFO);
+		pkey		serial PRIMARY KEY		# not change
+
+		id		text NOT NULL ref(usr.id)
+		sid		text NOT NULL
+		login_tm	bigint NOT NULL
+		msg		text
+
+		INDEX		id
+		INDEX		sid
+		INDEX_TDB	login_tm, text			# index on TextDB
+INFO
+
+	pkeyカラムは常に無視されます。
+	ソース中のテーブル定義を分かりやすくする理由以外で書く必要もありません。
+	"INDEX" は必ず大文字で書く必要があります。
+		複数列挙（マルチカラムindex）は指定できません。
+	"INDEX_TDB" は複数列挙可能です（それぞれ単独のINDEX_TDB指定とみなされます）。
 
 ================================================================================
 ●テーブルの作成

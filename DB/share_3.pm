@@ -28,28 +28,93 @@ sub get_options {
 ################################################################################
 sub create_table_wrapper {
 	my $self = shift;
-	my ($table, $ci, $ext) = @_;
-	my %cols;
-	foreach(@{$ci->{flag}})    { $cols{$_} = {name => $_, type => 'flag'}; }	# boolean
-	foreach(@{$ci->{text}})    { $cols{$_} = {name => $_, type => 'text'}; }	# text
-	foreach(@{$ci->{ltext}})   { $cols{$_} = {name => $_, type => 'ltext'};}	# large text
-	foreach(@{$ci->{int}})     { $cols{$_} = {name => $_, type => 'int'};  }	# int
-	foreach(@{$ci->{float}})   { $cols{$_} = {name => $_, type => 'float'};}	# float
-	foreach(@{$ci->{idx}})     { $cols{$_}->{index}    = 1; }			# index
-	foreach(@{$ci->{idx_tdb}}) { $cols{$_}->{index_tdb}= 1; }			# index for Text-DB
-	foreach(@{$ci->{unique}})  { $cols{$_}->{unique}   = 1; }			# unique
-	foreach(@{$ci->{notnull}}) { $cols{$_}->{not_null} = 1; }			# NOT NULL
-	while(my ($k, $v) = each(%{ $ci->{default} })) {		# default
-		$cols{$k}->{default}  = $v;
-	}
-	while(my ($k, $v) = each(%{ $ci->{ref} })) {			# foreign key
-		$cols{$k}->{ref} = $v;
-	}
+	my ($table, $lines, $ext) = @_;
+
+	$lines = ref($lines) ? $lines : [ split(/\n/, $lines) ];
+
 	my @cols;
-	while(my ($k,$v) = each(%cols)) { push(@cols, $v); }
-	foreach (@{$ext || []}) {
-		push(@cols, $_);
+	my %cref;
+	my $err;
+	foreach my $l (@$lines) {
+		my $x = $l =~ s/^\s+//r;
+		$x =~ s/^((?:'[^']*'|[^'])*?)\s*#.*$/$1/;
+		if ($x =~ /^\s*$/) { next; }
+
+		if ($x =~ /^INDEX(_TDB)?(?:\s+(.*?))?\s*$/) {
+			my $tdb = $1 ? '_tdb' : '';
+			my $col = $2;
+			my @c = split(/\s*,\s*/, $col);
+			if (!@c) {
+				$self->error("Column name not found in INDEX row in table '%s'.", $table);
+				$err=1;
+				next;
+			}
+			if (!$tdb && $#c != 0) {
+				$self->error("Multi-column indexes are not supported in table '%s': %s", $table, $col);
+				$err=1;
+				next;
+			}
+			foreach(@c) {
+				my $h = $cref{$_};
+				if (!$h) {
+					$self->error("Illegal index column in table '%s': %s", $table, $_);
+					$err=1;
+					next;
+				}
+				$h->{"index$tdb"}=1;
+			}
+			next;
+		}
+
+		# escape string
+		my @str;
+		$x =~ s!'((?:[^']|'')*)'!push(@str, $1 =~ s/''/'/rg), "#$#str"!eg;
+		$x =~ tr/A-Z/a-z/;
+
+		# parse line
+		my ($name, $type, @opt) = split(/\s+/, $x);
+		if ($name eq 'pkey') { next; }
+
+		my $c = { name => $name, type => $type };
+		$cref{$name} = $c;
+
+		while(@opt) {
+			my $o = shift(@opt);
+			if ($o eq 'not' && $opt[0] eq 'null') {
+				shift(@opt);
+				$c->{not_null} = 1;
+				next;
+			}
+			if ($o eq 'unique') {
+				$c->{unique} = 1;
+				next;
+			}
+			if ($o eq 'default') {
+				my $v = shift(@opt);
+				if ($v =~ /^#(\d+)$/) {		# default 'Value'
+					$v = $str[$1];
+				} elsif ($v =~ /\d/) {
+					$v = $v + 0;
+				} else {
+					$v = '';
+				}
+				$c->{default} = $v;
+				next;
+			}
+			if ($o =~ /^ref\((\w+\.\w+)\)$/) {
+				$c->{ref} = $1;
+				next;
+			}
+
+			$self->error("Unknown option in column '%s' in table '%s': %s", $name, $table, $o);
+			$err=1;
+		}
+		push(@cols, $c);
 	}
+	if ($err) { return 999; }
+
+	# ext columns
+	push(@cols, @{$ext || []});
 
 	return $self->create_table($table, \@cols);
 }

@@ -377,34 +377,55 @@ sub create_user_table {
 
 	$DB->begin();
 
-	my %cols;
-	$cols{text}    = [ qw(id name pass email) ];
-	$cols{int}     = [ qw(login_c login_tm fail_c fail_tm) ];
-	$cols{flag}    = [ qw(disable isadmin) ];
-	$cols{idx}     = [ qw(id email isadmin) ];
-	$cols{unique}  = [ qw(id email) ];
-	$cols{notnull} = [ qw(id name) ];
-	$DB->create_table_wrapper($table, \%cols);
+	$DB->create_table_wrapper($table, <<INFO);
+		pkey		serial PRIMARY KEY		# not change
 
-	undef %cols;
-	$cols{text}    = [ qw(id sid) ];
-	$cols{int}     = [ qw(login_tm) ];
-	$cols{flag}    = [ qw() ];
-	$cols{idx}     = [ qw(id sid login_tm) ];
-	$cols{unique}  = [ qw() ];
-	$cols{notnull} = [ qw(id sid login_tm) ];
-	$cols{ref}     = { id => "$table.id" };
-	$DB->create_table_wrapper("${table}_sid", \%cols);
+		id		text NOT NULL UNIQUE
+		name		text NOT NULL			# display name
+		pass		text NOT NULL			# crypted
+		email		text UNIQUE
 
-	undef %cols;
-	$cols{text}    = [ qw(id type msg ip host agent) ];
-	$cols{int}     = [ qw(tm) ];
-	$cols{flag}    = [ qw() ];
-	$cols{idx}     = [ qw(id type ip tm) ];
-	$cols{unique}  = [ qw() ];
-	$cols{notnull} = [ qw(tm) ];
-	# $cols{ref}     = { id => "$table.id" };	# Do not set, for illeagl ID.
-	$DB->create_table_wrapper("${table}_log", \%cols);
+		login_c		int NOT NULL DEFAULT 0		# login count
+		login_tm	bigint				# last login time (UTC)
+		fail_c		int NOT NULL DEFAULT 0		# login fail count (clear on success)
+		fail_tm		bigint				# last failed time (UTC)
+		disable		boolean NOT NULL 		# account is disabled
+		isadmin		boolean NOT NULL		# account is admin
+
+		INDEX		id
+		INDEX		email
+		INDEX		isadmin
+INFO
+
+	$DB->create_table_wrapper("${table}_sid", <<INFO);
+		pkey		serial PRIMARY KEY		# not change
+
+		id		text NOT NULL ref(${table}.id)
+		sid		text NOT NULL
+		login_tm	bigint NOT NULL
+
+		INDEX		id
+		INDEX		sid
+		INDEX_TDB	login_tm
+INFO
+
+	$DB->create_table_wrapper("${table}_log", <<INFO);
+		pkey		serial PRIMARY KEY		# not change
+
+		id		text		# Do not set NOT NULL, tTo record errors where ID is not entered.
+		type		text   NOT NULL
+		msg		text
+		tm		bigint NOT NULL
+
+		ip		text
+		host		text
+		agent		text
+
+		INDEX		id
+		INDEX		type
+		INDEX		ip
+		INDEX		tm
+INFO
 
 	$DB->commit();
 }
