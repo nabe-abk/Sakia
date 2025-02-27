@@ -751,7 +751,10 @@ sub _loadpm {
 		if ($@) { delete $INC{$pm_file}; die($@); }
 
 		no strict 'refs';
-		if (! *{"${pm}::debug"}{CODE}) { *{"${pm}::debug"} = \&_export_debug; }
+		if (! *{"${pm}::debug"}{CODE}) {
+			*{"${pm}::debug"}      = \&_export_debug;
+			*{"${pm}::debug_json"} = \&_export_debug_json;
+		}
 	}
 
 	my $obj = $pm->new($self, @_);
@@ -764,9 +767,12 @@ sub _loadpm {
 
 sub _export_debug {
 	my $self = shift;
-	$self->{ROBJ}->_debug(join(' ', @_));			## safe
+	$self->{ROBJ}->_debug(join(' ', @_));				## safe
 }
-
+sub _export_debug_json {
+	my $self = shift;
+	$self->{ROBJ}->_debug($self->{ROBJ}->generate_json(@_));	## safe
+}
 ################################################################################
 # Query/Form
 ################################################################################

@@ -894,7 +894,11 @@ sub clone {
 #-------------------------------------------------------------------------------
 sub debug {
 	my $self = shift;
-	$self->_debug(join(' ', @_));	## safe
+	$self->_debug(join(' ', @_));			## safe
+}
+sub debug_json {
+	my $self = shift;
+	$self->_debug($self->generate_json(@_));	## safe
 }
 sub _debug {
 	my $self = shift;
@@ -1051,17 +1055,19 @@ sub generate_json {
 	foreach(@$dat) {
 		if (!defined $_)	{ push(@ary, 'null'); next; }
 		if (!ref($_))		{ push(@ary, $self->_encode_json_val($_)); next; }
+		if (ref($_) eq 'CODE')  { push(@ary, $_); next; }
 		if ($self->is_bool($_))	{ push(@ary, $_ ? 'true' : 'false');  next; }
 		if (ref($_) eq 'SCALAR'){
 			if ($$_ =~ /^true|false|null$/) { push(@ary, $$_); next; }			# true/false/null
 			push(@ary, '"' . ($$_ =~ s/(\\|\n|\t|\r|\b|\f|\")/$JSON_ESC{$1}/rg) . '"');	# force string
 			next;
 		}
-
 		if (ref($_) eq 'ARRAY') {
 			push(@ary, $self->generate_json($_, $opt, "$t$tab"));
 			next;
 		}
+
+		# HASH
 		my @a;
 		my @b;
 		my $_cols = $cols ? $cols : [ keys(%$_) ];
