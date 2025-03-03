@@ -2,8 +2,9 @@ use strict;
 package Sakia::DB::text;
 use Fcntl;
 #-------------------------------------------------------------------------------
-our $FileNameFormat;
 our %IndexCache;
+our $ErrNotFoundCol;
+our $ErrInvalidVal;
 ################################################################################
 # insert, update, delete
 ################################################################################
@@ -24,7 +25,7 @@ sub insert {
 	}
 
 	# check data type
-	$h = $self->check_column_type($table, $h);
+	$h = $self->check_column_data($table, $h, 'insert');
 	if (!defined $h) {
 		$self->edit_index_exit($table);
 		return 0;	# error exit
@@ -40,9 +41,6 @@ sub insert {
 	} else {	# auto pkey
 		$pkey = $h->{pkey} = ++( $self->{"$table.serial"} );	# pkey
 	}
-
-	# default value
-	$h = { %{$self->{"$table.default"}}, %$h };
 
 	# check UNIQUE
 	my @unique_cols = keys(%{ $self->{"$table.unique"} });
@@ -165,8 +163,9 @@ sub update_match {
 	my %funcs;
 	foreach (keys(%$h)) {
 		if (ord($_) != 0x2a) { next; }		# "*column"
-
 		my $v=$h->{$_};
+		if ($v =~ /^\w+$/) { next; }		# *column = "XXXX_YYYY_ZZZ" is special value
+
 		$v =~ s![^\w\+\-\*\/\%\(\)\|\&\~<>]!!g;
 		if ($v =~ /\w\(/) {
 			$self->error("expression error(not allow function). table=$table, $v");
@@ -190,7 +189,7 @@ sub update_match {
 	}
 
 	# check update data
-	$h = $self->check_column_type($table, $h, 'is_update');
+	$h = $self->check_column_data($table, $h);
 	if (!defined $h) {
 		$self->edit_index_exit($table);
 		return 0;	# error exit
@@ -528,7 +527,7 @@ sub clear_unique_cache {
 sub begin {
 	my $self = shift;
 	if ($self->{begin}) {
-		$self->error("there is already a transaction in progress");
+		$self->error("There is already a transaction in progress.");
 		return ;
 	}
 	$self->{begin} = 1;
@@ -538,7 +537,7 @@ sub begin {
 sub rollback {
 	my $self = shift;
 	if ($self->{begin}) {
-		$self->error("there is no transaction in progress");
+		$self->error("There is no transaction in progress.");
 		return ;
 	}
 	$self->{begin} = 0;
@@ -623,64 +622,80 @@ sub load_trace_ary {
 }
 
 ################################################################################
-# Check column data type for insert(), update_match()
+# Check column data for insert(), update_match()
 ################################################################################
-sub check_column_type {
-	my ($self, $table, $h, $is_update) = @_;
-	my $ROBJ = $self->{ROBJ};
-	my $cols       = $self->{"$table.cols"};
-	my $str_cols   = $self->{"$table.str"};
-	my $int_cols   = $self->{"$table.int"};
-	my $float_cols = $self->{"$table.float"};
-	my $flag_cols  = $self->{"$table.flag"};
+sub check_column_data {
+	my ($self, $table, $h, $is_insert) = @_;
+	my $cols = $self->{"$table.cols"};
 
+	#
 	# check columns
-	my %new_hash;
-	foreach (keys(%$h)) {
-		if (! $cols->{$_}) {
-			$self->error("On '%s' table, not exists '%s' column", $table, $_);
-			return;
+	#
+	my %new;
+	my $err;
+	foreach(keys(%$h)) {
+		my $c  = $_ =~ /^(\*)(.*)/ ? $2 : $_;
+		my $info = $cols->{$c};
+		if (!$info) {
+			$self->error($ErrNotFoundCol, $table, $c);
+			$err=1;
+			next;
 		}
+
 		my $v = $h->{$_};
-		if ($v eq '') {			# keep null
-			$new_hash{$_} = '';
+		if (ord($_) == 0x2a) {		# $h->{'*col'} = 'SQL value'
+			$v = $self->load_sql_context($table, $c, $v);
+			if (!defined $v) { $err=1; next; }
+		}
+		if ($v ne '' && !&{$info->{check}}($v))  {
+			$self->error($ErrInvalidVal, $table, $c, $h->{$_}, $info->{type});
+			$err=1;
+			next;
+		}
+		$new{$c} = $v;
+	}
+	if ($err) { return; }
 
-		} elsif ($int_cols->{$_})  {
-			if ($v !~ /^[\+\-]?\d+\.?$/) {
-				$self->error("On '%s' table, '%s' column's value is not %s: %s", $table, $_, 'integer', $v);
-				return;
-			}
-			$new_hash{$_} = int($v);
-		} elsif ($float_cols->{$_}) {
-			if ($v !~ /^[\+\-]?\d+(?:\.\d*)?(?:[Ee][\+\-]?\d+)?$/) {
-				$self->error("On '%s' table, '%s' column's value is not %s: %s", $table, $_, 'number', $v);
-				return;
-			}
-			$new_hash{$_} = $v + 0;
+	#
+	# set default value
+	#
+	if ($is_insert) {
+		my $de = $self->{"$table.default"};
+		foreach(keys(%$de)) {
+			my $v = $de->{$_};
+			if (exists $new{$_} || $v eq '') { next; }
 
-		} elsif ($flag_cols->{$_}) {
-			if ($v ne '0' && $v ne '1') {
-				$self->error("On '%s' table, '%s' column's value is not %s: %s", $table, $_, 'flag', $v);
-				return;
-			}
-			$new_hash{$_} = $v;
-
-		} else {	# string
-			$new_hash{$_} = $v;
+			# 0x23 = '#'
+			$new{$_} = ord($v)==0x23 ? substr($v,1) : $self->load_sql_context($table, $_, $v);
 		}
 	}
+
+	#
 	# check not null
-	my $notnull_cols = $self->{"$table.notnull"};
-	my @check_columns_ary = $is_update ? keys(%new_hash) : keys(%$notnull_cols);	# update or insert
+	#
+	my $notnull = $self->{"$table.notnull"};
+	my @check_columns_ary = $is_insert ? keys(%$notnull) : keys(%new);	# insert or update
 	foreach (@check_columns_ary) {
-		if (!$notnull_cols->{$_}) { next; }
-		if (!$is_update && $_ eq 'pkey') { next; }
-		if (!defined $h->{$_}) {
-			$self->error("On '%s' table, '%s' column is constrained not null", $table, $_);
+		if (!$notnull->{$_}) { next; }
+		if ($is_insert && $_ eq 'pkey') { next; }
+		if ($new{$_} eq '') {
+			$self->error('On "%s" table, "%s" column is constrained not null.', $table, $_);
 			return;
 		}
 	}
-	return \%new_hash;
+	return \%new;
+}
+
+sub load_sql_context {
+	my ($self, $table, $c, $org) = @_;
+	my $ROBJ = $self->{ROBJ};
+
+	my $v = $org =~ tr/A-Z/a-z/r;
+	if ($v eq 'null')		{ return ''; }
+	if ($v eq 'current_timestamp')	{ return $ROBJ->print_tmf('%Y-%m-%d %H:%M:%S'); }
+
+	$self->error('SQL value "%s" is not support ("%s" table "%s" column).', $org, $table, $c);
+	return undef;
 }
 
 ################################################################################
@@ -691,14 +706,14 @@ sub load_and_generate_where {
 	my $table= shift;
 	my $ROBJ = $self->{ROBJ};
 
-	my $idx  = $self->{"$table.idx"} || $self->load_index($table);
+	my $idx  = $self->{"$table.index"} || $self->load_index($table);
 	my $cols = $self->{"$table.cols"};
-	my $str  = $self->{"$table.str"};
 
 	# parse condition
 	my $load_all;
 	my @cond;
 	my %in;
+	my $err;
 	while(@_) {
 		my $col = shift;
 		my $val = shift;
@@ -708,37 +723,45 @@ sub load_and_generate_where {
 		# negative logic?
 		if (substr($col,0,1) eq '-') {
 			$col = substr($col,1);
-			$not = 1;
+			$not = '!';
 		}
 
+		#
 		# check column
-		if (! $cols->{$col}) {
+		#
+		my $info = $cols->{$col};
+		if (! $info) {
 			$self->edit_index_exit($table);
-			$self->error("On '%s' table, not exists '%s' column", $table, $col);
-			return (undef,undef,undef);
+			$self->error($ErrNotFoundCol, $table, $col);
+			$err=1;
 		}
 		if (! $idx->{$col}) { $load_all=1; }	# need row file data
 
+		#
+		# check value
+		#
+		if ($val ne '') {
+			$val = $self->check_value_for_match($table, $col, $val, $info);
+			if (!defined $val) { $err=1; }
+		}
+
+		#
 		# generate function
+		#
 		if (ref($val) eq 'ARRAY') {
-			# multiple values
-			$in{$col} = { map {$_=>1} @$val };
-			push(@cond, ($not ? '!' : '') . "exists\$in->{$col}->{\$h->{$col}}");
+			$in{$_} = { map {$_=>1} @$val };
+			push(@cond, "${not}exists\$match_h->{$_}->{\$_->{$_}}");
 			next;
 		}
-		if ($str->{$col}) {
-			# string
+		if ($info->{is_str}) {		# string
 			$val =~ s/([\\'])/\\$1/g;
 			push(@cond, $not ? "\$h->{$col}ne'$val'" : "\$h->{$col}eq'$val'");
 			next;
 		}
-		if (1) {
-			# other (int/number/flag)
-			$val += 0;
-			push(@cond, $not ? "\$h->{$col}!=$val" : "\$h->{$col}==$val");
-			next;
-		}
+		# other (int/number/flag)
+		push(@cond, $not ? "\$h->{$col}!=$val" : "\$h->{$col}==$val");
 	}
+	if ($err) { return; }
 
 	# compile
 	my $func;
@@ -772,27 +795,27 @@ sub save_index {
 		return 0;
 	}
 
-	my $db        = $self->{"$table.tbl"};			# table array ref
-	my $idx_cols  = $self->{"$table.idx"};			# index array ref
-	my $idx_only  = $self->{"$table.index_only"};		# index only flag
-	my $serial    = int($self->{"$table.serial"});		# serial
+	my $db        = $self->{"$table.tbl"};		# table array ref
+	my $idx_cols  = $self->{"$table.index"};	# index array ref
+	my $serial    = int($self->{"$table.serial"});	# serial
 
 	my @lines;
-	push(@lines, "5\n");					# LINE 01: DB file version
-	push(@lines, "R" . $ROBJ->{TM} . rand(1) . "\n");	# LINE 02: random signature
-	push(@lines, "0$serial\n");				# LINE 03: Serial number for pkey
-	# *** When rewriting the top 3 lines, also rewrite generate_pkey() ***
+	push(@lines, "6\n");						# LINE 01: DB index file version
+	push(@lines, "R" . $ROBJ->{TM} . rand(1) . "\n");		# LINE 02: random signature
+	push(@lines, "0$serial\n");					# LINE 03: Serial number for pkey
+	# *** If you change the specifications of these three lines, also rewrite generate_pkey(). ***
 
-	my @allcols = sort(keys(%{ $self->{"$table.cols"} }));				# LINE 04: all colmuns
+	my $cols    = $self->{"$table.cols"};
+	my @allcols = sort(keys(%$cols));						# LINE 04: all colmuns
 	push(@lines, join("\t", @allcols) . "\n");
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.int"}     }))) . "\n");	# LINE 05: int colmuns
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.float"}   }))) . "\n");	# LINE 06: number columns
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.flag"}    }))) . "\n");	# LINE 07: flag columns
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.str"}     }))) . "\n");	# LINE 08: string columns
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.unique"}  }))) . "\n");	# LINE 09: UNIQUE columns
-	push(@lines, join("\t", sort(keys(%{ $self->{"$table.notnull"} }))) . "\n");	# LINE 10: NOT NULL columns
+	push(@lines, join("\t", map { $cols->{$_}->{type} } @allcols) . "\n");		# LINE 05: colmun types
+
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.unique"}  }))) . "\n");	# LINE 06: UNIQUE columns
+	push(@lines, join("\t", sort(keys(%{ $self->{"$table.notnull"} }))) . "\n");	# LINE 07: NOT NULL columns
 	my $de = $self->{"$table.default"};
-	push(@lines, join("\t", map { $de->{$_} } @allcols) . "\n");			# LINE 11: default values
+	push(@lines, join("\t", map { $de ->{$_} } @allcols) . "\n");			# LINE 08: default values
+	my $ref= $self->{"$table.ref"};
+	push(@lines, join("\t", map { $ref->{$_} } @allcols) . "\n");			# LINE 09: refernces
 
 	# sort all lines order by pkey
 	my @new_db = sort { $a->{pkey} <=> $b->{pkey} } @$db;
@@ -805,7 +828,7 @@ sub save_index {
 		delete $h{pkey};
 		('pkey', sort(keys(%h)));
 	};
-	push(@lines, join("\t", @idx_cols) . "\n");					# LINE 12: index colmuns
+	push(@lines, join("\t", @idx_cols) . "\n");					# LINE 10: index colmuns
 
 	#-----------------------------------------
 	# generate row composition function
@@ -896,7 +919,7 @@ sub write_rowfile {
 	my $dir  = $self->{dir} . $table . '/';
 
 	delete $h->{'*'};	# delete loaded flag
-	my $r = $ROBJ->fwrite_hash($dir . sprintf($FileNameFormat, $h->{pkey}). $ext, $h);
+	my $r = $ROBJ->fwrite_hash($dir . sprintf($self->{filename_format}, $h->{pkey}). $ext, $h);
 	$h->{'*'}=1;		# save loaded flag
 	return $r;
 }
@@ -919,7 +942,7 @@ sub delete_rowfile {
 	my $ROBJ = $self->{ROBJ};
 	my $ext  = $self->{ext};
 	my $dir  = $self->{dir} . $table . '/';
-	return $ROBJ->remove_file($dir . sprintf($FileNameFormat, $pkey). $ext);
+	return $ROBJ->remove_file($dir . sprintf($self->{filename_format}, $pkey). $ext);
 }
 
 #-------------------------------------------------------------------------------

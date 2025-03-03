@@ -14,7 +14,7 @@ sub create_table {
 	$table =~ s/\W//g;
 	if ($table eq '') {
 		$self->error('Called create_table() with null table name.');
-		return 9;
+		return 8;
 	}
 
 	#-----------------------------------------
@@ -24,6 +24,14 @@ sub create_table {
 	my @vals;
 	my @index_cols;
 	foreach(@$columns) {
+		if ($_->{name} eq 'pkey') {
+			if    ($_->{type} =~ /^bigserial$/i) { $cols[0] = 'pkey BIGSERIAL PRIMARY KEY'; }
+			elsif ($_->{type} !~ /^serial$/i) {
+				$self->error('The pkey column type is invalid: %s', $_->{type});
+				return 9;
+			}
+			next;
+		}
 		my ($col, $sql, @ary) = $self->parse_column($_);
 		if (!$col) { return 10; }	# error
 
@@ -76,20 +84,28 @@ sub parse_column {
 	}
 	my $sql;
 	my @vals;
-	if    ($h->{type} eq 'int')    { $sql .= "$col INT";     }
-	elsif ($h->{type} eq 'bigint') { $sql .= "$col BIGINT";  }
-	elsif ($h->{type} eq 'float')  { $sql .= "$col FLOAT";   }
-	elsif ($h->{type} eq 'flag')   { $sql .= "$col BOOLEAN"; }
-	elsif ($h->{type} eq 'boolean'){ $sql .= "$col BOOLEAN"; }
-	elsif ($h->{type} eq 'text')   { $sql .= "$col TEXT";    }
-	elsif ($h->{type} eq 'ltext')  { $sql .= "$col TEXT";    }
+
+	my $t = $h->{type} =~ tr/A-Z/a-z/r;
+	if    ($t eq 'int')	{ $sql .= "$col INT";     }
+	elsif ($t eq 'bigint')	{ $sql .= "$col BIGINT";  }
+	elsif ($t eq 'float')	{ $sql .= "$col FLOAT";   }
+	elsif ($t eq 'flag')	{ $sql .= "$col BOOLEAN"; }
+	elsif ($t eq 'boolean')	{ $sql .= "$col BOOLEAN"; }
+	elsif ($t eq 'text')	{ $sql .= "$col TEXT";    }
+	elsif ($t eq 'ltext')	{ $sql .= "$col TEXT";    }
+	elsif ($t eq 'date')	{ $sql .= "$col DATE";    }
+	elsif ($t eq 'timestamp' || $t eq 'timestamp(0)'){ $sql .= "$col TIMESTAMP(0)"; }
 	else {
 		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
 		return;
 	}
+
 	if ($h->{unique})   { $sql .= ' UNIQUE';   }
 	if ($h->{not_null}) { $sql .= ' NOT NULL'; }
-	if ($h->{default} ne '') {
+	if ($h->{default_sql} ne '') {
+		my $v = $h->{default_sql};
+		$sql .= " DEFAULT " . ($v =~ /^\w+$/ ? $v : '*error*');
+	} elsif ($h->{default} ne '') {
 		$sql .= " DEFAULT ?";
 		push(@vals, $h->{default});
 	}

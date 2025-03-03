@@ -11,9 +11,37 @@ package Sakia::DB::text;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
 #-------------------------------------------------------------------------------
-our $VERSION = '1.40';
-our $FileNameFormat = "%05d";
+our $VERSION = '1.50';
 our %IndexCache;
+our $ErrNotFoundCol = 'On "%s" table, not found "%s" column.';
+our $ErrInvalidVal  = 'On "%s" table, invalid value of "%s" column. "%s" is not %s.';
+################################################################################
+# type define
+################################################################################
+my @MDAYS = (0,31,0,31,30,31,30,31,31,30,31,30,31);
+sub check_timestmap {
+	my $fmt = shift;
+	if (shift !~ /^(\d+)\-(\d\d?)\-(\d\d?)(?: (\d\d?):(\d\d?):(\d\d?))?$/) { return; }
+	if ($1<0  || $2<1  || 12<$2) { return; }
+	if (23<$4 || 59<$5 || 59<$6) { return; }
+	my ($y,$m,$d)=($1,$2,$3);
+	my $days = $2 != 2 ? $MDAYS[$2] : ((($1 % 4) || (!($1 % 100) && ($1 % 400))) ? 28 : 29);
+	return 0<$3 && $3<=$days ? sprintf($fmt,$1,$2,$3,$4,$5,$6) : undef;
+}
+
+our %TypeInfo = (
+	int  => { type=>'int',   check=>sub{ my $v=shift; $v+0 eq $v } },
+	float=> { type=>'float', check=>sub{ my $v=shift; $v+0 eq $v } },
+	flag => { type=>'flag',  check=>sub{ my $v=shift; $v eq '0' || $v eq '1'} },
+	text => { type=>'text', is_str=>1, check=> sub { 1; } },
+	date => { type=>'date', is_str=>1, check=> sub {
+		$_[0] = &check_timestmap('%04d-%02d-%02d', $_[0])
+	}},
+	timestamp=>{ type=>'timestamp',	is_str=>1, check=> sub {
+		$_[0] = &check_timestmap('%04d-%02d-%02d %02d:%02d:%02d', $_[0])
+	}}
+);
+
 ################################################################################
 # constructor
 ################################################################################
@@ -23,15 +51,16 @@ sub new {
 
 	my $ext  = $opt->{ext} || '.dat';
 	my $self = bless({
-		%{ $opt || {}},		# options
-		ROBJ	=> $ROBJ,
-		DBMS	=> 'STextDB',
-		ID	=> "stext.$dir",
-
 		ext		=> $ext,
 		dir		=> $dir,
 		index_file	=> "#index$ext",
-		index_backup	=> "#index.backup$ext"
+		index_backup	=> "#index.backup$ext",
+		filename_format	=> '%05d',
+
+		%{ $opt || {}},		# options
+		ROBJ	=> $ROBJ,
+		DBMS	=> 'TextDB',
+		ID	=> "text.$dir"
 	}, $class);
 
 	if (!-e $dir) { $ROBJ->mkdir($dir); }
@@ -50,11 +79,8 @@ sub find_table {
 
 	my $dir   = $self->{dir} . $table . '/';
 	my $index = $dir . $self->{index_file};
-	if (!-e $index) {
-		if (-e "$dir$self->{index_backup}") { return 1; }	# Found
-		return 0;	# Not found
-	}
-	return 1;
+	if (-e $index || -e "$dir$self->{index_backup}") { return 1; }	# Found
+	return 0;	# Not found
 }
 
 ################################################################################
@@ -80,7 +106,7 @@ sub select {
 
 	my $dir = $self->{dir} . $table . '/';
 	my $ext = $self->{ext};
-	my $index_cols = $self->{"$table.idx"};
+	my $index_cols = $self->{"$table.index"};
 	my $all_cols   = $self->{"$table.cols"};
 	my $load_cols  = $self->{"$table.load_all"} ? $all_cols : $index_cols;
 
@@ -92,7 +118,7 @@ sub select {
 		$sel_cols = ref($sel_cols) ? $sel_cols : [ $sel_cols ];
 		if (my @ary = grep { !$all_cols->{$_} } @$sel_cols) {
 			foreach(@ary) {
-				$self->error('"%s" column is not exists (for %s)', $_, 'SELECT');
+				$self->error($ErrNotFoundCol, $table, $_);
 			}
 			return [];
 		}
@@ -101,7 +127,7 @@ sub select {
 	#-----------------------------------------------------------------------
 	# load conditions data
 	#-----------------------------------------------------------------------
-	my $flags = $h->{flag} || $h->{boolean};
+	my $flags    = $h->{flag} || $h->{boolean};
 	my @match    = sort( keys(%{ $h->{match}     }) );
 	my @not_match= sort( keys(%{ $h->{not_match} }) );
 	my @min      = sort( keys(%{ $h->{min}       }) );
@@ -138,7 +164,7 @@ sub select {
 
 			if (!$load_cols->{$_}) { $sort_req_load_all=1; }
 			if (!$all_cols->{$_}) {
-				$self->error('"%s" column is not exists (for %s)', $_, 'SORT');
+				$self->error($ErrNotFoundCol, $table, $_);
 				return [];
 			}
 		}
@@ -194,7 +220,7 @@ sub select {
 			#---------------------------------------------
 			$names{$jn}=$jt;
 			my $jdb = $self->load_index($jt);
-			my $idx = $self->{"$jt.idx"};
+			my $idx = $self->{"$jt.index"};
 			my $all = $self->{"$jt.cols"};
 
 			#---------------------------------------------
@@ -273,7 +299,7 @@ sub select {
 				foreach my $col (@{$_->{cols}}) {
 					my ($c,$n) = $col =~ /^(\w+) +(\w+)$/ ? ($1,$2) : ($col,$col);
 					if (!$all->{$c}) {
-						$self->error('"%s" column is not exists on "%s" (for %s)', $c, $jtable, 'LEFT JOIN');
+						$self->error($ErrNotFoundCol , ' (for %s)', $jtable, $c, 'LEFT JOIN');
 						return [];
 					}
 					$join_colname{$n} = { tname=>$jn, col=>$c };
@@ -307,7 +333,7 @@ sub select {
 				return [];
 			}
 			if (!$self->{"$t.cols"}->{$c}) {
-				$self->error('"%s" column is not exists on "%s" (for %s)', $c, $t, 'SEARCH');
+				$self->error($ErrNotFoundCol, $t, $c);
 				return [];
 			}
 		}
@@ -356,71 +382,66 @@ sub select {
 		my %match_h;
 		my %not_match_h;
 		if (@target_cols_L1) {
+			my $err;
 			my @cond;
-			my $str = $self->{"$table.str"};
 			foreach(@match) {
-				my $v = $h->{match}->{$_};
+				my $v    = $h->{match}->{$_};
+				my $info = $all_cols->{$_};
+				if ($v ne '') {
+					$v = $self->check_value_for_match($table, $_, $v, $info);
+					if (!defined $v) { $err=1; }
+				}
 				if (ref($v) eq 'ARRAY') {
 					$match_h{$_} = { map {$_=>1} @$v };
 					push(@cond, "exists\$match_h->{$_}->{\$_->{$_}}");
 					next;
 				}
-				if ($str->{$_} || $v eq '') {	# $v eq '' is null
-					$v =~ s/([\\'])/\\$1/g;
-					push(@cond, "\$_->{$_}eq'$v'");
-					next;
-				}
-				if (1) {
-					# numeric
-					$v += 0;
-					if ($v ne $h->{match}->{$_}) { $self->error("'$v' ($_ column) is not number"); return []; }
-					push(@cond, "\$_->{$_}==$v");
-					next;
-				}
+				push(@cond, "\$_->{$_}" . ($info->{is_str} ? "eq'$v'" : "==$v"));
 			}
 			foreach (@not_match) {
-				my $v = $h->{not_match}->{$_};
+				my $v    = $h->{not_match}->{$_};
+				my $info = $all_cols->{$_};
+				if ($v ne '') {
+					$v = $self->check_value_for_match($table, $_, $v, $info);
+					if (!defined $v) { $err=1; }
+				}
 				if (ref($v) eq 'ARRAY') {
-					$not_match_h{$_} = { map {$_=>1} @$v };
-					push(@cond, "!exists\$not_match_h->{$_}->{\$_->{$_}}");
+					$match_h{$_} = { map {$_=>1} @$v };
+					push(@cond, "!exists\$match_h->{$_}->{\$_->{$_}}");
 					next;
 				}
-				if ($str->{$_} || $v eq '') {	# $v eq '' is null
-					$v =~ s/([\\'])/\\$1/g;
-					push(@cond, "\$_->{$_}ne'$v'");
-					next;
-				}
-				if (1) {
-					$v += 0;
-					if ($v ne $h->{not_match}->{$_}) { $self->error("'$v' ($_ column) is not number"); return []; }
-					push(@cond, "\$_->{$_}!=$v");
-					next;
-				}
+				push(@cond, "\$_->{$_}" . ($info->{is_str} ? "ne'$v'" : "!=$v"));
 			}
 			foreach (@flag) {
-				my $v = $flags->{$_};
-				if ($v ne '0' && $v ne '1') { $self->error("'$v' ($_ column) is not flag(allowd '1' or '0')"); return []; }
+				my $v    = $flags->{$_};
+				my $info = $all_cols->{$_};
+				if ($info->{type} ne 'flag') { $self->error('The "%s" column is not flag: %s', $_, $info->{type}); $err=1; next; }
+				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{flag}->{$_}, $info->{type}); $err=1; }
 				push(@cond, "\$_->{$_}==$v");
 			}
 			foreach (@min) {
-				my $v = $h->{min}->{$_} + 0;
-				if ($v != $h->{min}->{$_}) { $self->error("'$v' ($_ column) is not numeric"); return []; }
-				push(@cond, "\$_->{$_}>=$v");
+				my $v    = $h->{min}->{$_};
+				my $info = $all_cols->{$_};
+				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{min}->{$_}, $info->{type}); $err=1; }
+				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'ge' : '>=') . "$v");
 			}
 			foreach (@max) {
-				my $v = $h->{max}->{$_} + 0;
-				if ($v != $h->{max}->{$_}) { $self->error("'$v' ($_ column) is not numeric"); return []; }
-				push(@cond, "\$_->{$_}<=$v");
+				my $v    = $h->{max}->{$_};
+				my $info = $all_cols->{$_};
+				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{max}->{$_}, $info->{type}); $err=1; }
+				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'le' : '<=') . "$v");
 			}
 			foreach (@gt) {
-				my $v = $h->{gt}->{$_} + 0;
-				if ($v != $h->{gt}->{$_}) { $self->error("'$v' ($_ column) is not numeric"); return []; }
-				push(@cond, "\$_->{$_}>$v");
+				my $v    = $h->{gt}->{$_};
+				my $info = $all_cols->{$_};
+				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{gt}->{$_}, $info->{type}); $err=1; }
+				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'gt' : '>') . "$v");
 			}
 			foreach (@lt) {
-				my $v = $h->{lt}->{$_} + 0;
-				if ($v != $h->{lt}->{$_}) { $self->error("'$v' ($_ column) is not numeric"); return []; }
-				push(@cond, "\$_->{$_}<$v");
+				my $v    = $h->{lt}->{$_};
+				my $info = $all_cols->{$_};
+				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{lt}->{$_}, $info->{type}); $err=1; }
+				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'lt' : '<') . "$v");
 			}
 			foreach (@$is_null) {
 				push(@cond, "\$_->{$_}eq''");
@@ -428,6 +449,7 @@ sub select {
 			foreach (@$not_null) {
 				push(@cond, "\$_->{$_}ne''");
 			}
+			if ($err) { return []; }
 
 			$cond_L1 = 'if (!(' . join(' && ', @cond) . ')) { next; }';
 			$self->trace("select '$table' where L1: $cond_L1");
@@ -642,14 +664,44 @@ sub parse_table_name {
 }
 
 #-------------------------------------------------------------------------------
+# check value for matching
+#-------------------------------------------------------------------------------
+sub check_value_for_match {
+	my $self = shift;
+	my $table= shift;
+	my $col  = shift;
+	my $v    = shift;
+	my $info = shift;
+	my $check= $info->{check};
+
+	if (ref($v) eq 'ARRAY') {
+		my @ary = @$v;
+		foreach(@ary) {
+			my $org = $_;
+			if ($_ ne '' && !&$check($_)) {
+				$self->error($ErrInvalidVal, $table, $col, $org, $info->{type});
+				return;
+			}
+		}
+		return \@ary;
+	}
+
+	my $org = $v;
+	if (!&$check($v)) {
+		$self->error($ErrInvalidVal, $table, $col, $org, $info->{type});
+		return;
+	}
+	return $v;
+}
+
+#-------------------------------------------------------------------------------
 # generate order by function
 #-------------------------------------------------------------------------------
 sub generate_sort_func {
 	my ($self, $table, $h, $tname) = @_;
 	my @sort = ref($h->{sort}    ) ? @{$h->{sort}    } : ($h->{sort}     eq '' ? () : ($h->{sort}    ));
 	my @rev  = ref($h->{sort_rev}) ? @{$h->{sort_rev}} : ($h->{sort_rev} eq '' ? () : ($h->{sort_rev}));
-	my $cols   = $self->{"$table.cols"};
-	my $is_str = $self->{"$table.str"};
+	my $cols = $self->{"$table.cols"};
 	my @cond;
 	foreach(0..$#sort) {
 		my $col = $sort[$_];
@@ -664,7 +716,7 @@ sub generate_sort_func {
 			$col = $sort[$_] = $2;
 		}
 
-		my $op = $is_str->{$col} ? 'cmp' : '<=>';
+		my $op = $cols->{$col}->{is_str} ? 'cmp' : '<=>';
 		if ($col =~ /\./) { $col = "'$col'"; }
 		push(@cond, $rev ? "\$b->{$col}$op\$a->{$col}" : "\$a->{$col}$op\$b->{$col}");
 	}
@@ -745,57 +797,42 @@ sub load_index {
 	# delete "\n"
 	map { chop($_) } @$lines;
 
-	# LINE 01: DB file Version
-	my $version = $self->{"$table.version"} = int(shift(@$lines));	# Version
-
-	# LINE 02: Random string
+	#-------------------------------------------------------------
+	# parse index file
+	#-------------------------------------------------------------
+	# LINE 01: DB index file version
+	my $ver = $self->{"$table.version"} = int(shift(@$lines));	# Version
 	my $random;
-	if ($version > 3) {	# Exists since Ver4
-		$random = $self->{"$table.rand"} = shift(@$lines);
-	} else {		# Substitute with last modofied
-		$random = $ROBJ->get_lastmodified($index);
-		shift(@$lines);	# Read off index only flag
+	if ($ver < 6) {
+		# Index parser for version 3 to 5.
+		$random = $self->parse_old_index($table, $index, $ver, $lines);
+	} else {
+		$self->{"$table.rand"} = $random = shift(@$lines);	# LINE 02: Random string
+		$self->{"$table.serial"} = int(shift(@$lines));		# LINE 03: Serial number for pkey (current max)
+
+		my @allcols = split(/\t/, shift(@$lines));		# LINE 04: all colmuns
+		my @types   = split(/\t/, shift(@$lines));		# LINE 05: colmuns type
+		my %cols = map { $_ => $TypeInfo{shift(@types)} } @allcols;
+		$self->{"$table.cols"} = \%cols;
+
+		$self->{"$table.unique"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };	# LINE 06: UNQUE columns
+		$self->{"$table.notnull"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };	# LINE 07: NOT NULL columns
+
+		# LINE 08: default values
+		# LINE 09: refernces
+		my @de  = split(/\t/, shift(@$lines));
+		my @ref = split(/\t/, shift(@$lines));
+		$self->{"$table.default"} = { map { $_ => shift(@de)  } @allcols };
+		$self->{"$table.ref"}     = { map { $_ => shift(@ref) } @allcols };
 	}
 
-	# LINE 03: Serial number for pkey (current max)
-	$self->{"$table.serial"} = int(shift(@$lines));
-	# LINE 04: all colmuns
-	my @allcols = split(/\t/, shift(@$lines));
-	$self->{"$table.cols"} = { map { $_ => 1} @allcols };
-	# LINE 05: integer columns
-	$self->{"$table.int"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-	# LINE 06: float columns
-	if ($version > 3) {
-		$self->{"$table.float"}= { map { $_ => 1} split(/\t/, shift(@$lines)) };
-	} else {
-		$self->{"$table.float"} = {};
-	}
-	# LINE 07: flag(boolean) columns
-	$self->{"$table.flag"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-
-	if ($version > 3) {
-		# LINE 08: string columns
-		$self->{"$table.str"}     = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-		# LINE 09: UNQUE columns
-		$self->{"$table.unique"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-		# LINE 10: NOT NULL columns
-		$self->{"$table.notnull"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };
-	} else {
-		my %cols = %{ $self->{"$table.cols"} };
-		map { delete $cols{$_} } (keys(%{$self->{"$table.int"}}), keys(%{$self->{"$table.flag"}}) );
-		$self->{"$table.str"}     = \%cols;
-		$self->{"$table.unique"}  = { pkey=>1 };
-		$self->{"$table.notnull"} = { pkey=>1 };
-	}
-	if ($version > 4) {
-		# LINE 11: default values
-		my @ary  = split(/\t/, shift(@$lines));
-		$self->{"$table.default"} = { map { $_ => shift(@ary) } @allcols };
-	}
-	# LINE 12: index columns
+	# LINE 10: index columns
 	my @idx_cols = split(/\t/, shift(@$lines));
-	$self->{"$table.idx"} = { map { $_ => 1} @idx_cols };
+	$self->{"$table.index"} = { map { $_ => 1} @idx_cols };
 
+	#-------------------------------------------------------------
+	# parse index data
+	#-------------------------------------------------------------
 	# check cache
 	if ($IndexCache{"$table.rand"} eq $random) {
 		$self->{"$table.load_all"} = $IndexCache{"$table.load_all"};
@@ -835,7 +872,7 @@ sub read_rowfile {
 
 	my $ext = $self->{ext};
 	my $dir = $self->{dir} . $table . '/';
-	my $h = $ROBJ->fread_hash_cached($dir . sprintf($FileNameFormat, $h->{pkey}). $ext);
+	my $h = $ROBJ->fread_hash_cached($dir . sprintf($self->{filename_format}, $h->{pkey}). $ext);
 	$h->{'*'}=1;			# loaded flag
 	return $h;
 }
@@ -847,7 +884,7 @@ sub override_by_rowfile {		# keep original hash data
 
 	my $ext = $self->{ext};
 	my $dir = $self->{dir} . $table . '/';
-	my $x = $ROBJ->fread_hash_cached($dir . sprintf($FileNameFormat, $h->{pkey}). $ext);
+	my $x = $ROBJ->fread_hash_cached($dir . sprintf($self->{filename_format}, $h->{pkey}). $ext);
 	return { %$h, %$x, '*'=>1 };
 }
 

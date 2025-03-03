@@ -8,7 +8,7 @@ use Sakia::AutoLoader;
 use Sakia::DB::share;
 use DBI ();
 #-------------------------------------------------------------------------------
-our $VERSION = '1.40';
+our $VERSION = '1.50';
 my %DB_attr = (AutoCommit => 1, RaiseError => 0, PrintError => 0, PrintWarn => 0, pg_enable_utf8 => 0);
 #-------------------------------------------------------------------------------
 # check UTF8 bug

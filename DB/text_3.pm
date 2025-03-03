@@ -2,8 +2,16 @@ use strict;
 package Sakia::DB::text;
 use Sakia::DB::share_3;
 #-------------------------------------------------------------------------------
-our $FileNameFormat;
 our %IndexCache;
+our $ErrNotFoundCol;
+our $ErrInvalidVal;
+our %TypeInfo;
+my %TypeInfoAlias = (
+	bigint	=> 'int',
+	boolean	=> 'flag',
+	ltext	=> 'text',
+	'timestamp(0)' => 'timestamp'
+);
 ################################################################################
 # manupilate table
 ################################################################################
@@ -12,10 +20,10 @@ our %IndexCache;
 #-------------------------------------------------------------------------------
 sub create_table {
 	my $self = shift;
-	my $ROBJ = $self->{ROBJ};
 	my ($table, $colums) = @_;
+	my $ROBJ = $self->{ROBJ};
+
 	$table =~ s/\W//g;
-	$table =~ tr/A-Z/a-z/;
 	if ($table eq '') { $self->error('Called create_table() with null table name'); return 9; }
 
 	#--------------------------------------------------
@@ -25,34 +33,52 @@ sub create_table {
 	if (!-e $dir) {
 		if (!$ROBJ->mkdir($dir)) { $self->error("mkdir '$dir' error : $!"); }
 	}
-	if ($table =~ /^\d/) {
-		$self->error("To be a 'a-z' or '_' at the first character of a table name : '%s'", $table);
+	if (-e "$dir$self->{index_backup}") {
+		$self->error("'%s' table already exists", $table);
 		return 30;
 	}
-	my $index = $dir . $self->{index_file};
-	if (-e $index) {
-		$self->error("'%s' table already exists", $table);
-		return 40;
+	if ($table =~ /^\d/) {
+		$self->error("To be a 'a-z' or '_' at the first character of a table name : '%s'", $table);
+		rmdir($dir);
+		return 30;
 	}
 
 	#--------------------------------------------------
 	# parse columns
 	#--------------------------------------------------
-	$self->{"$table.cols"}    = { 'pkey'=>1 };	# all
-	$self->{"$table.idx"}     = { 'pkey'=>1 };	# index
-	$self->{"$table.int"}     = { 'pkey'=>1 };	# integer
-	$self->{"$table.float"}   = {};			# number
-	$self->{"$table.flag"}    = {};			# flag(boolean)
-	$self->{"$table.str"}     = {};			# string
+	$self->{"$table.cols"}    = { 'pkey'=>$TypeInfo{int} };
 	$self->{"$table.unique"}  = { 'pkey'=>1 };	# UNIQUE
 	$self->{"$table.notnull"} = { 'pkey'=>1 };	# NOT NULL
+	$self->{"$table.index"}   = { 'pkey'=>1 };	# index
 	$self->{"$table.default"} = {};			# Default value
+	$self->{"$table.ref"}     = {};			# Referential constraints
 	$self->{"$table.serial"}  = 0;
 
 	foreach(@$colums) {
-		my $err = $self->parse_column($table, $_);
+		if ($_->{name} eq 'pkey') { next; }	# skip
+		my $err = $self->parse_column($table, $_, 'create');
 		if ($err) {
+			rmdir($dir);
 			return $err;
+		}
+	}
+
+	# chcek ref
+	my $cols = $self->{"$table.cols"};
+	my $ref  = $self->{"$table.ref"};
+	foreach(keys(%$ref)) {
+		my $c = $ref->{$_};
+		if ($c eq '' || $c =~ /\./) { next; }
+
+		my $type = $cols->{$_}->{type};
+		my $i    = $cols->{$c};
+		if (!$i) {
+			$self->error('Colmun "%s" of table "%s" not found referenced by column "%s".', $c, $table, $_);
+			return 33;
+		}
+		if ($i->{type} ne $type) {
+			$self->error('Colmun "%s %s" of table "%s" not match type referenced by column "%s %s".', $c, $i->{type}, $table, $_, $type);
+			return 34;
 		}
 	}
 
@@ -68,6 +94,7 @@ sub parse_column {
 	my $self = shift;
 	my $table= shift;
 	my $h    = shift;
+	my $is_create = shift;
 
 	my $col = $h->{name};
 	$col =~ s/\W//g;
@@ -83,25 +110,75 @@ sub parse_column {
 		return 8;
 	}
 	# column info
-	if    ($h->{type} eq 'int')    { $self->{"$table.int"}  ->{$col}=1; }
-	elsif ($h->{type} eq 'bigint') { $self->{"$table.int"}  ->{$col}=1; }	# work on 64bit perl
-	elsif ($h->{type} eq 'float')  { $self->{"$table.float"}->{$col}=1; }
-	elsif ($h->{type} eq 'flag')   { $self->{"$table.flag"} ->{$col}=1; }
-	elsif ($h->{type} eq 'boolean'){ $self->{"$table.flag"} ->{$col}=1; }
-	elsif ($h->{type} eq 'text')   { $self->{"$table.str"}  ->{$col}=1; }
-	elsif ($h->{type} eq 'ltext')  { $self->{"$table.str"}  ->{$col}=1; }
-	else {
+	my $type = $h->{type} =~ tr/A-Z/a-z/r;
+	$type = $TypeInfoAlias{$type} || $type;
+	my $info = $TypeInfo{$type};
+	if (!$info) {
 		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
 		return 10;
 	}
-	$self->{"$table.cols"}->{$col}=1;
-	if ($h->{unique})  { $self->{"$table.unique"} ->{$col}=1; }	# UNIQUE
-	if ($h->{notnull}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
+	$self->{"$table.cols"}->{$col}=$info;
+
+	if ($h->{unique})   { $self->{"$table.unique"} ->{$col}=1; }	# UNIQUE
+	if ($h->{not_null}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
 	if ($h->{index} || $h->{index_tbl} || $h->{unique}) {
-		$self->{"$table.idx"}->{$col}=1;
+		$self->{"$table.index"}->{$col}=1;
 	}
-	if ($h->{default} ne '') {
-		$self->{"$table.default"}->{$col} = $h->{default};
+
+	#
+	# default value
+	#
+	if ($h->{default_sql} =~ /^NULL$/i) {
+		$self->{"$table.default"}->{$col} = '';
+
+	} elsif ($h->{default_sql} ne '') {
+		my $org = $h->{default_sql};
+		my $v   = $self->load_sql_context($table, $col, $org);
+		if (!defined $v) {
+			return 21;
+		}
+		if ($v ne '' && &{$info->{check}}($v) eq '') {
+			$self->error('Column "%s %s" have invalid default value: %s', $col, $h->{type}, $org);
+			return 22;
+		}
+		$self->{"$table.default"}->{$col} = $org =~ tr/a-z/A-Z/r;
+
+	} elsif ($h->{default} ne '') {
+		my $v = $h->{default};
+		if ($v ne '' && &{$info->{check}}($v) eq '') {
+			$self->error('Column "%s %s" have invalid default value: %s', $col, $h->{type}, $h->{default});
+			return 22;
+		}
+		$self->{"$table.default"}->{$col} = '#' . $v;
+	}
+
+	#
+	# Referential constraints
+	#
+	if ($h->{ref}) {
+		my $ref = $h->{ref};
+		if ($ref !~ /^(\w+)\.(\w+)/) {
+			$self->error('Column "%s" have invalid refernce: %s', $col, $h->{ref});
+			return 31;
+		}
+		my $t = $1;
+		my $c = $2;
+		if (!$is_create || $t ne $table) {	# skip check when same table ref on create table.
+			if (!$self->load_index($t)) {
+				$self->error('Table "%s" not found referenced by column "%s".', $t, $col);
+				return 32;
+			}
+			my $i = $self->{"$t.cols"}->{$c};
+			if (!$i) {
+				$self->error('Colmun "%s" of table "%s" not found referenced by column "%s".', $c, $t, $col);
+				return 33;
+			}
+			if ($i->{type} ne $type) {
+				$self->error('Colmun "%s %s" of table "%s" not match type referenced by column "%s %s".', $c, $i->{type}, $t, $col, $type);
+				return 34;
+			}
+		}
+		$self->{"$table.ref"}->{$col} = $t eq $table ? $c : $ref;
 	}
 
 	return 0;
@@ -142,13 +219,13 @@ sub rebuild_index {
 	my $index_backup = $dir . $self->{index_backup};
 	if (!-r $index_backup) { return 1; }
 
-	# バックアップの読み込み
+	# load backup file
 	my $index_file_orig = $self->{index_file};
 	$self->{index_file} = $self->{index_backup};
 	my $db = $self->load_index($table);
 	$self->{index_file} = $index_file_orig;
 
-	# ファイルリスト取得
+	# load column data files
 	my $files = $ROBJ->search_files($dir);
 	my $ext   = $self->{ext};
 	my @files = grep(/^\d+$ext$/, @$files);
@@ -187,32 +264,8 @@ sub add_column {
 		return 7;
 	}
 
-	my $col = $h->{name};
-	$col =~ s/\W//g;
-	if ($col eq '') { return 8; }
-
-	# check column name
-	my $cols = $self->{"$table.cols"};
-	if ($cols->{$col}) {
-		$self->edit_index_exit($table);
-		$self->error("'%s' is already exists in relation '%s'", $col, $table);
-		return 8;
-	}
-	# update table info
-	if    ($h->{type} eq 'int')   { $self->{"$table.int"}  ->{$col}=1; }
-	elsif ($h->{type} eq 'float') { $self->{"$table.float"}->{$col}=1; }
-	elsif ($h->{type} eq 'flag')  { $self->{"$table.flag"} ->{$col}=1; }
-	elsif ($h->{type} eq 'boolean'){$self->{"$table.flag"} ->{$col}=1; }
-	elsif ($h->{type} eq 'text')  { $self->{"$table.str"}  ->{$col}=1; }
-	elsif ($h->{type} eq 'ltext') { $self->{"$table.str"}  ->{$col}=1; }
-	else {
-		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
-		return 10;
-	}
-	$self->{"$table.cols"}->{$col}=1;
-	if ($h->{unique})  { $self->{"$table.unique"} ->{$col}=1; }	# UNIQUE
-	if ($h->{notnull}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
-	if ($h->{index} || $h->{unique}) { $self->{"$table.idx"}->{$col}=1; }
+	my $r = $self->parse_column($table, $h);
+	if ($r) { return $r; }
 
 	$self->save_index($table);
 	$self->save_backup_index($table);
@@ -225,11 +278,11 @@ sub add_column {
 # drop column
 #-------------------------------------------------------------------------------
 sub drop_column {
-	my ($self, $table, $column) = @_;
+	my ($self, $table, $col) = @_;
 	my $ROBJ = $self->{ROBJ};
 	$table  =~ s/\W//g;
-	$column =~ s/\W//g;
-	if ($table eq '' || $column eq '') { return 7; }
+	$col    =~ s/\W//g;
+	if ($table eq '' || $col eq '') { return 7; }
 
 	# load index
 	$table =~ s/\W//g;
@@ -241,29 +294,27 @@ sub drop_column {
 	}
 
 	# column exists?
-	if (! $self->{"$table.cols"}->{$column}) {
+	if (! $self->{"$table.cols"}->{$col}) {
 		$self->edit_index_exit($table);
-		$self->error("Can't find '%s' column in relation '%s'", $column, $table);
+		$self->error("Can't find '%s' column in relation '%s'", $col, $table);
 		return 9;
 	}
 
 	# update table info
-	delete $self->{"$table.cols"}->{$column};
-	delete $self->{"$table.int"}->{$column};
-	delete $self->{"$table.float"}->{$column};
-	delete $self->{"$table.flag"}->{$column};
-	delete $self->{"$table.str"}->{$column};
-	delete $self->{"$table.unique"}->{$column};
-	delete $self->{"$table.notnull"}->{$column};
-	delete $self->{"$table.idx"}->{$column};
+	delete $self->{"$table.cols"}->{$col};
+	delete $self->{"$table.unique"}->{$col};
+	delete $self->{"$table.notnull"}->{$col};
+	delete $self->{"$table.index"}->{$col};
+	delete $self->{"$table.default"}->{$col};
+	delete $self->{"$table.ref"}->{$col};
 
 	# delete column from all row data
 	$self->load_allrow($table);
 	my $all = $self->{"$table.tbl"};
 	foreach(@$all) {
-		if ($_->{$column} eq '') { next; }
+		if ($_->{$col} eq '') { next; }
 
-		delete $_->{$column};
+		delete $_->{$col};
 		$self->write_rowfile($table, $_);
 	}
 
@@ -278,7 +329,7 @@ sub drop_column {
 # add index
 #-------------------------------------------------------------------------------
 sub add_index {
-	my ($self, $table, $column) = @_;
+	my ($self, $table, $col) = @_;
 	my $ROBJ = $self->{ROBJ};
 
 	# load index
@@ -292,14 +343,14 @@ sub add_index {
 
 	# update table info
 	my $cols = $self->{"$table.cols"};
-	my $idx  = $self->{"$table.idx"};
-	if (! grep { $_ eq $column } @$cols) {	# not exists
+	my $idx  = $self->{"$table.index"};
+	if (! grep { $_ eq $col } @$cols) {	# not exists
 		$self->edit_index_exit($table);
-		$self->error("On '%s' table, not exists '%s' column", $table, $column);
+		$self->error($ErrNotFoundCol, $table, $col);
 		return 8;
 	}
-	if (! grep { $_ eq $column } @$idx) {	# add to index
-		push(@$idx, $column);
+	if (! grep { $_ eq $col } @$idx) {	# add to index
+		push(@$idx, $col);
 		my $dir     = $self->{dir} . $table . '/';
 		my $ext = $self->{ext};
 		$self->load_allrow($table);
@@ -322,6 +373,66 @@ sub save_backup_index {
 	local ($self->{"$table.tbl"}) = [];
 	$self->save_index($table, 1);
 	return 0;
+}
+
+################################################################################
+# old functions
+################################################################################
+sub parse_old_index {
+	my $self  = shift;
+	my $table = shift;
+	my $index = shift;	# index file
+	my $ver   = shift;	# Version
+	my $lines = shift;	# file lines ary
+
+	# LINE 01: DB index file version
+	# my $ver = $self->{"$table.version"} = int(shift(@$lines));	# Version
+
+	# LINE 02: Random string
+	my $random;
+	if ($ver > 3) {
+		$random = $self->{"$table.rand"} = shift(@$lines);
+	} else {
+	    	$random = $self->{ROBJ}->get_lastmodified($index);
+		shift(@$lines);	# Read off index only flag
+	}
+	$self->{"$table.serial"} = int(shift(@$lines));			# LINE 03: Serial number for pkey (current max)
+	my @allcols = split(/\t/, shift(@$lines));			# LINE 04: all colmuns
+
+	my %types;
+	if ($ver > 3) {
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='int';   }	# LINE 05: integer columns
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='float'; }	# LINE 06: float columns
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='flag';  }	# LINE 07: flag columns
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='text';  }	# LINE 08: string columns
+
+		# LINE 09: UNQUE columns
+		$self->{"$table.unique"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };
+		# LINE 10: NOT NULL columns
+		$self->{"$table.notnull"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };
+	} else {
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='int';  }
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='flag'; }
+		foreach(@allcols) {
+			if ($types{$_}) { next; }
+			$types{$_} = 'text';	# default type is 'text'
+		}
+		$self->{"$table.unique"}  = { pkey=>1 };
+		$self->{"$table.notnull"} = { pkey=>1 };
+	}
+	$self->{"$table.cols"} = { map { $_ => $TypeInfo{$types{$_}} } @allcols };
+
+	if ($ver > 4) {
+		# LINE 11: default values
+		my @ary  = split(/\t/, shift(@$lines));
+		$self->{"$table.default"} = { map { $_ => ($ary[0] ne '' ? '#' : '') . shift(@ary) } @allcols };
+	} else {
+		$self->{"$table.default"} = {};
+	}
+	#
+	# LINE 12: index columns
+	#
+	return $random
 }
 
 1;

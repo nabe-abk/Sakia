@@ -66,21 +66,20 @@ sub create_table_wrapper {
 			next;
 		}
 
-		# escape string
-		my @str;
-		$x =~ s!'((?:[^']|'')*)'!push(@str, $1 =~ s/''/'/rg), "#$#str"!eg;
-		$x =~ tr/A-Z/a-z/;
-
 		# parse line
-		my ($name, $type, @opt) = split(/\s+/, $x);
-		if ($name eq 'pkey') { next; }
-
+		my ($name, $type, $opt) = split(/\s+/, $x, 3);
 		my $c = { name => $name, type => $type };
 		$cref{$name} = $c;
 
+		# escape string
+		my @str;
+		$opt =~ s!'((?:[^']|'')*)'!push(@str, $1 =~ s/''/'/rg), "#$#str"!eg;
+
+		my @opt = split(/\s+/, $opt);
 		while(@opt) {
-			my $o = shift(@opt);
-			if ($o eq 'not' && $opt[0] eq 'null') {
+			my $o  = shift(@opt) =~ tr/A-Z/a-z/r;;
+			my $o1 = $opt[0]     =~ tr/A-Z/a-z/r;
+			if ($o eq 'not' && $o1 eq 'null') {
 				shift(@opt);
 				$c->{not_null} = 1;
 				next;
@@ -89,14 +88,24 @@ sub create_table_wrapper {
 				$c->{unique} = 1;
 				next;
 			}
+			if ($name eq 'pkey' && $o eq 'primary' && $o1 eq 'key') {
+				shift(@opt);
+				next;
+			}
 			if ($o eq 'default') {
-				my $v = shift(@opt);
-				if ($v =~ /^#(\d+)$/) {		# default 'Value'
+				my $v  = shift(@opt);
+				my $vn = $v + 0;
+				
+				if ($v =~ /^#(\d+)$/) {		# default 'value'
 					$v = $str[$1];
-				} elsif ($v =~ /\d/) {
-					$v = $v + 0;
-				} else {
+				} elsif ($vn != 0 && $v eq $vn) {
+					$v = $vn;
+				} elsif ($v =~ /^\w+$/) {
+					$c->{default_sql} = $v;
 					$v = '';
+				} else {
+					$self->error("Unknown default value in column '%s' in table '%s': %s", $name, $table, $v);
+					$err=1;
 				}
 				$c->{default} = $v;
 				next;
@@ -105,7 +114,6 @@ sub create_table_wrapper {
 				$c->{ref} = $1;
 				next;
 			}
-
 			$self->error("Unknown option in column '%s' in table '%s': %s", $name, $table, $o);
 			$err=1;
 		}

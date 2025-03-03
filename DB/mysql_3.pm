@@ -14,20 +14,29 @@ sub create_table {
 	$table =~ s/\W//g;
 	if ($table eq '') {
 		$self->error('Called create_table() with null table name.');
-		return 9;
+		return 8;
 	}
 
 	#-----------------------------------------
 	# table columns
 	#-----------------------------------------
 	my @cols = ('pkey int NOT NULL AUTO_INCREMENT PRIMARY KEY');
-	# Do not change 'SERIAL' or 'BIGINT' or 'int unsigned'
-	# Because, reference (foreign key) is not match 'pkey' column!
+	# Do not change to "SERIAL", for compatibility with other RDBMS.
+	# MySQL's "SERIAL" is "bigint unsgined".
+	# In a standard RDBMS, "SERIAL" is "int".
 
 	my @vals;
 	my @index_cols;
 	my %text_col;
 	foreach(@$columns) {
+		if ($_->{name} eq 'pkey') {
+			if    ($_->{type} =~ /^bigserial$/i) { $cols[0] = 'pkey bigint NOT NULL AUTO_INCREMENT PRIMARY KEY'; }
+			elsif ($_->{type} !~ /^serial$/i) {
+				$self->error('The pkey column type is invalid: %s', $_->{type});
+				return 9;
+			}
+			next;
+		}
 		my ($col, $sql, $is_text, @ary) = $self->parse_column($_);
 		if (!$col) { return 10; }	# error
 
@@ -87,34 +96,37 @@ sub parse_column {
 		return;
 	}
 
-	my $sql  ='';
-	my $check='';
+	my $sql='';
 	my @vals;
 	my $is_text;
 
-	if    ($h->{type} eq 'int')    { $sql .= "$col INT";    }
-	elsif ($h->{type} eq 'bigint') { $sql .= "$col BIGINT"; }
-	elsif ($h->{type} eq 'float')  { $sql .= "$col FLOAT";  }
-	elsif ($h->{type} eq 'flag' || $h->{type} eq 'boolean') {
-		$sql .= "$col TINYINT";
-		$check=" CHECK($col=0 OR $col=1)";
-	}
-	elsif ($h->{type} eq 'text') {
+	my $t = $h->{type} =~ tr/A-Z/a-z/r;
+	if    ($t eq 'int')	{ $sql .= "$col INT";     }
+	elsif ($t eq 'bigint')	{ $sql .= "$col BIGINT";  }
+	elsif ($t eq 'float')	{ $sql .= "$col FLOAT";   }
+	elsif ($t eq 'flag')	{ $sql .= "$col BOOLEAN"; }
+	elsif ($t eq 'boolean')	{ $sql .= "$col BOOLEAN"; }
+	elsif ($t eq 'text') {
 	  if ($h->{unique} || $h->{ref}){ $sql .= "$col VARCHAR(" . int($self->{unique_text_size} || 255) .")"; }
 		else			{ $sql .= "$col TEXT"; $is_text=1; }
 	}
-	elsif ($h->{type} eq 'ltext') { $sql .= "$col MEDIUMTEXT"; }
+	elsif ($t eq 'ltext')	{ $sql .= "$col MEDIUMTEXT"; }
+	elsif ($t eq 'date')	{ $sql .= "$col DATE";    }
+	elsif ($t eq 'timestamp' || $t eq 'timestamp(0)'){ $sql .= "$col DATETIME(0)"; }
 	else {
 		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
 		return;
 	}
+
 	if ($h->{unique})   { $sql .= ' UNIQUE';   }
 	if ($h->{not_null}) { $sql .= ' NOT NULL'; }
-	if ($h->{default} ne '') {
+	if ($h->{default_sql} ne '') {
+		my $v = $h->{default_sql};
+		$sql .= " DEFAULT " . ($v =~ /^\w+$/ ? $v : '*error*');
+	} elsif ($h->{default} ne '') {
 		$sql .= " DEFAULT ?";
 		push(@vals, $h->{default});
 	}
-	$sql .= $check;
 	if ($_->{ref}) {
 		# foreign key（table_name.col_name）
 		my ($ref_table, $ref_col) = split(/\./, $h->{ref} =~ s/[^\w\.]//rg);

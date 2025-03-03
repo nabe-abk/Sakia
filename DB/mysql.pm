@@ -8,7 +8,7 @@ use Sakia::AutoLoader;
 use Sakia::DB::share;
 use DBI ();
 #-------------------------------------------------------------------------------
-our $VERSION = '1.40';
+our $VERSION = '1.50';
 my %DB_attr = (AutoCommit => 1, RaiseError => 0, PrintError => 0, PrintWarn => 0);
 ################################################################################
 # constructor
@@ -27,7 +27,7 @@ sub new {
 		DBMS	=> 'MySQL',
 		ID	=> "my.$db",
 
-		exists_table_cache => {}
+		exists_table_cache	=> {}
 	}, $class);
 
 	# connect
