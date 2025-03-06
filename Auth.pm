@@ -34,6 +34,7 @@ sub new {
 	#	admin_allow_ip	=> [],
 	#	admin_allow_host=> [],
 	#	admin_secret	=> undef,
+	#	admin_max_sessions => undef,	# undef is same {max_sessions}
 
 		# log
 	#	stop_log	=> undef,	# Stop log to "$self->{table}_log" table.

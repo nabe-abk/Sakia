@@ -71,8 +71,8 @@ sub login {
 	#---------------------------------------------------
 	# login success
 	#---------------------------------------------------
+	my $max = (($h->{isadmin} ? $self->{admin_max_sessions} : undef) // $self->{max_sessions}) -1;
 	my $ary = $DB->select_match($table.'_sid', 'id', $id);
-	my $max = $self->{max_sessions}-1;
 	if (0<=$max && $max <= $#$ary) {
 		$ary = [ sort {$b->{pkey} <=> $a->{pkey}} @$ary ];
 		splice(@$ary, 0, $max);
@@ -154,7 +154,7 @@ sub logout {
 	if ($id eq '') { return; }
 
 	my $table = $self->{table} . '_sid';
-	if ($self->{logout_all} || $self->{max_sessions} < 2) {
+	if ($self->{logout_all}) {
 		$DB->delete_match($table, 'id', $id);
 	} else {
 		$DB->delete_match($table, 'id', $id, 'pkey', $spkey);
