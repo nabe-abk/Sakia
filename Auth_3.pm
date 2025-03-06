@@ -177,17 +177,11 @@ sub load_logs {
 
 	my $y = int($query->{year});
 	my $m = int($query->{mon});
-	(1969<$y) && eval {
-		require Time::Local;
-		if (0<$m && $m<13) {
-			$h{min}->{tm} = Time::Local::timelocal(0,0,0,1,$m-1,$y-1900);
-			if ($m==12) { $m=1; $y++; }
-			$h{max}->{tm} = Time::Local::timelocal(0,0,0,1,$m,  $y-1900) -1;
-		} else {
-			$h{min}->{tm} = Time::Local::timelocal(0,0,0,1,1,$y-1900);
-			$h{max}->{tm} = Time::Local::timelocal(0,0,0,1,1,$y-1900 +1);
-		}
-	};
+	if ($y && $m) {
+		$h{min}->{tm} = sprintf("%d-%d-01", $y, $m);
+		$m++; if (12<$m) { $m=1; $y++; }
+		$h{lt}->{tm}  = sprintf("%d-%d-01", $y, $m);
+	}
 
 	return $DB->select($table, \%h);
 }
@@ -344,6 +338,9 @@ sub check_user_data {
 	return \%up;
 }
 
+################################################################################
+# other functions
+################################################################################
 sub check_pass_by_id {
 	my ($self, $id, $pass) = @_;
 	my $DB = $self->{DB};
@@ -386,9 +383,9 @@ sub create_user_table {
 		email		text UNIQUE
 
 		login_c		int NOT NULL DEFAULT 0		# login count
-		login_tm	bigint				# last login time (UTC)
+		login_tm	timestamp(0)			# last login time
 		fail_c		int NOT NULL DEFAULT 0		# login fail count (clear on success)
-		fail_tm		bigint				# last failed time (UTC)
+		fail_tm		timestamp(0)			# last failed time
 		disable		boolean NOT NULL 		# account is disabled
 		isadmin		boolean NOT NULL		# account is admin
 
@@ -402,7 +399,7 @@ INFO
 
 		id		text NOT NULL ref(${table}.id)
 		sid		text NOT NULL
-		login_tm	bigint NOT NULL
+		login_tm	timestamp(0) NOT NULL DEFAULT CURRENT_TIMESTAMP
 
 		INDEX		id
 		INDEX		sid
@@ -412,10 +409,10 @@ INFO
 	$DB->create_table_wrapper("${table}_log", <<INFO);
 		pkey		serial PRIMARY KEY		# not change
 
-		id		text		# Do not set NOT NULL, tTo record errors where ID is not entered.
-		type		text   NOT NULL
+		id		text		# Do not set NOT NULL, to record errors where ID is not entered.
+		type		text NOT NULL
 		msg		text
-		tm		bigint NOT NULL
+		tm		timestamp(0) NOT NULL DEFAULT CURRENT_TIMESTAMP
 
 		ip		text
 		host		text

@@ -1426,11 +1426,38 @@ sub time2hash {
 }
 
 #-------------------------------------------------------------------------------
+# timestamp to UNIX time
+#-------------------------------------------------------------------------------
+my @UT_DAYS = (0,0,31,59,90,120,151,181,212,243,273,304,334,365,396);
+
+sub ts2time {
+	my $self = shift;
+	if ($_[0] !~ /^(\d+)\-(\d+)\-(\d+)(?: (\d+):(\d+):(\d+))?/) { return; }
+	return $self->tmlocal($1,$2,$3,$4,$5,$6);
+}
+sub tmlocal {
+	my $self = shift;
+	if (!defined $self->{TZ}) {	# if UTC+9 set TZ=9
+		my @x = localtime(86400);
+		$self->{TZ} = $x[2] - ($x[3]==1 ? 24 : 0);
+	}
+	my $y = $_[1]<3 ? $_[0]-1  : $_[0];
+	my $m = $_[1]<3 ? $_[1]+12 : $_[1];
+	my $z = int(($y-1968)/4) - ($y>2000 ? int(($y-2000)/100) : 0) + ($y>2000 ? int(($y-2000)/400) : 0);
+	return (($y-1970)*365 + $UT_DAYS[$m] + $_[2] + $z -1)*86400 + $_[3]*3600 + $_[4]*60 + $_[5] - $self->{TZ}*3600;
+}
+
+#-------------------------------------------------------------------------------
 # print formatted time
 #-------------------------------------------------------------------------------
-# print_tm($UTC);
-# print_tmf($format, $UTC);
+# print_ts($UTC);		# Std SQL timestamp
+# print_tm($UTC);		# local
+# print_tmf($format, $UTC);	# with format
 #
+sub print_ts {
+	my $self = shift;
+	return $self->print_tmf('%Y-%m-%d %H:%M:%S', @_);
+}
 sub print_tm {
 	my $self = shift;
 	return $self->print_tmf($self->{LC_TIMESTAMP}, @_);
@@ -1442,7 +1469,7 @@ sub print_tmf {
 
 	# This macro like 'strftime(3)' function.
 	# compatible : %Y %y %m %d %I %H %M %S %w %s %e and %a %p
-	my ($s, $m, $h, $D, $M, $Y, $wd, $yd, $isdst) = ref($tm) ? @$tm : localtime($tm);
+	my ($s, $m, $h, $D, $M, $Y, $wd, $yd, $isdst) = localtime($tm);
 	my %h;
 	$h{s} = $tm;
 	$h{j} = $yd;

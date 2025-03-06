@@ -42,7 +42,7 @@ sub new {
 
 		# extend
 		user_change_cols=> ['name', 'email'],
-		alt_uid		=> undef
+		alt_uid		=> undef	# Column to use instead of login ID.
 	};
 	return bless($self, $class);
 }

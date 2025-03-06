@@ -56,14 +56,14 @@ sub login {
 	# fail counter
 	#---------------------------------------------------
 	my $cnt = $h->{fail_c};
-	if ($h->{fail_tm} + $self->{fail_sleep_min} < $ROBJ->{TM}) { $cnt=0; }
+	if ($ROBJ->ts2time($h->{fail_tm}) +  $self->{fail_sleep} < $ROBJ->{TM}) { $cnt=0; }
 
-	if ($cnt > $self->{fail_limit}) {
+	if ($cnt >= $self->{fail_limit}) {
 		return { ret=>11, msg => $ROBJ->translate('Too many failures. Please try again later.') };
 	}
 	if ($h->{disable} || !$self->check_pass($h->{pass}, $pass)) {
 		$cnt++;
-		$DB->update_match($table, {fail_c => $cnt, fail_tm => $ROBJ->{TM}}, 'id', $id);
+		$DB->update_match($table, { fail_c => $cnt, '*fail_tm'=>'CURRENT_TIMESTAMP' }, 'id', $id);
 		$self->save_log($id, 'login', 'failure');
 		return { ret=>10, msg => $ROBJ->translate('Incorrect ID or password.') };
 	}
@@ -74,7 +74,7 @@ sub login {
 	my $ary = $DB->select_match($table.'_sid', 'id', $id);
 	my $max = $self->{max_sessions}-1;
 	if (0<=$max && $max <= $#$ary) {
-		$ary = [ sort {$b->{login_tm} <=> $a->{login_tm}} @$ary ];
+		$ary = [ sort {$b->{pkey} <=> $a->{pkey}} @$ary ];
 		splice(@$ary, 0, $max);
 		@$ary && $DB->delete_match($table.'_sid', 'pkey', [ map { $_->{pkey} } @$ary ]);
 	}
@@ -82,13 +82,12 @@ sub login {
 	my $sid = $ROBJ->generate_nonce(32);
 	my $pkey= $DB->insert("${table}_sid", {
 		id       => $id,
-		sid      => $sid,
-		login_tm => $ROBJ->{TM},
+		sid      => $sid
 	});
 	$self->{sid_pkey} = $pkey;
 
 	my $login_c = ++$h->{login_c};
-	$DB->update_match($table, { login_c=>$login_c, login_tm=>$ROBJ->{TM}, fail_c=>0 }, 'id', $id);
+	$DB->update_match($table, { login_c=>$login_c, '*login_tm'=>'CURRENT_TIMESTAMP', fail_c=>0 }, 'id', $id);
 
 	$self->set_login_info($h, $secret);
 	$self->save_log($id, 'login');
@@ -185,7 +184,7 @@ sub auth_session {
 	}
 
 	my $expires = $self->{expires};
-	if (0<$expires && $ss->{login_tm} + $expires < $ROBJ->{TM}) {
+	if (0<$expires && $ROBJ->ts2time($ss->{login_tm}) + $expires < $ROBJ->{TM}) {
 		$DB->delete_match($self->{table}.'_sid', 'pkey', $ss->{pkey});
 		return;
 	}
@@ -219,7 +218,6 @@ sub save_log {
 	$h->{agent} = $ENV{HTTP_USER_AGENT};
 	$h->{ip}    = $ENV{REMOTE_ADDR};
 	$h->{host}  = $ENV{REMOTE_HOST};
-	$h->{tm}    = $ROBJ->{TM};
 
 	foreach(keys(%$h)) {
 		$h->{$_} = substr($h->{$_}, 0, $self->{log_text_max});
