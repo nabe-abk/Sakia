@@ -351,7 +351,7 @@ sub add_index {
 	}
 	if (! grep { $_ eq $col } @$idx) {	# add to index
 		push(@$idx, $col);
-		my $dir     = $self->{dir} . $table . '/';
+		my $dir = $self->{dir} . $table . '/';
 		my $ext = $self->{ext};
 		$self->load_allrow($table);
 	}

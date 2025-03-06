@@ -199,6 +199,7 @@ sub update_match {
 	# generate where
 	my ($func,$db,$in) = $self->load_and_generate_where($table, @_);
 	if (!$func) {
+		$self->edit_index_exit($table);
 		return 0;	# error exit
 	}
 
@@ -276,6 +277,7 @@ sub delete_match {
 	# generate where
 	my ($func,$db,$in) = $self->load_and_generate_where($table, @_);
 	if (!$func) {
+		$self->edit_index_exit($table);
 		return 0;	# error exit
 	}
 
@@ -690,9 +692,10 @@ sub load_sql_context {
 	my ($self, $table, $c, $org) = @_;
 	my $ROBJ = $self->{ROBJ};
 
-	my $v = $org =~ tr/A-Z/a-z/r;
-	if ($v eq 'null')		{ return ''; }
-	if ($v eq 'current_timestamp')	{ return $ROBJ->print_tmf('%Y-%m-%d %H:%M:%S'); }
+	my $v = $org =~ tr/a-z/A-Z/r;
+	if (($v+0) eq $v)		{ return $v; }
+	if ($v eq 'NULL')		{ return ''; }
+	if ($v eq 'CURRENT_TIMESTAMP')	{ return $ROBJ->print_tmf('%Y-%m-%d %H:%M:%S'); }
 
 	$self->error('SQL value "%s" is not support ("%s" table "%s" column).', $org, $table, $c);
 	return undef;
@@ -717,7 +720,7 @@ sub load_and_generate_where {
 	while(@_) {
 		my $col = shift;
 		my $val = shift;
-		my $not = 0;
+		my $not = '';
 		if (!defined $col) { last; }
 
 		# negative logic?
@@ -731,7 +734,6 @@ sub load_and_generate_where {
 		#
 		my $info = $cols->{$col};
 		if (! $info) {
-			$self->edit_index_exit($table);
 			$self->error($ErrNotFoundCol, $table, $col);
 			$err=1;
 		}
@@ -749,8 +751,8 @@ sub load_and_generate_where {
 		# generate function
 		#
 		if (ref($val) eq 'ARRAY') {
-			$in{$_} = { map {$_=>1} @$val };
-			push(@cond, "${not}exists\$match_h->{$_}->{\$_->{$_}}");
+			$in{$col} = { map {$_=>1} @$val };
+			push(@cond, "${not}exists\$in->{$col}->{\$h->{$col}}");
 			next;
 		}
 		if ($info->{is_str}) {		# string

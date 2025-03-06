@@ -30,8 +30,8 @@ sub check_timestmap {
 }
 
 our %TypeInfo = (
-	int  => { type=>'int',   check=>sub{ my $v=shift; $v+0 eq $v } },
-	float=> { type=>'float', check=>sub{ my $v=shift; $v+0 eq $v } },
+	int  => { type=>'int',   check=>sub{ my $v=shift; $v eq int($v) } },
+	float=> { type=>'float', check=>sub{ my $v=shift; $v eq ($v+0)  } },
 	flag => { type=>'flag',  check=>sub{ my $v=shift; $v eq '0' || $v eq '1'} },
 	text => { type=>'text', is_str=>1, check=> sub { 1; } },
 	date => { type=>'date', is_str=>1, check=> sub {
@@ -925,7 +925,10 @@ sub eval_and_cache {
 	# function compile
 	my $func;
 	eval "\$func=$functext";
-	if ($@) { die "[$self->{DBMS}] in eval_and_cache() $@"; }
+	if ($@) {
+		my ($pack, $file, $line) = caller();
+		die "[$self->{DBMS}] in eval_and_cache() $@ (from $file at $line)";
+	}
 	return ($function_cache{$functext} = $func);
 }
 
