@@ -70,10 +70,10 @@ Auth.table に指定されたテーブル名（標準"usr"）を元に以下の3
 Ver.3.00にてテーブルカラムが変更になっています。
 PostgreSQL使用時は、以下のSQLを実行することで新しいVersionに対応できます。
 
-ALTER TABLE usr     ALTER login_tm  TYPE TIMESTAMP(0) USING to_timestamp(login_tm)::timestamp(0);
-ALTER TABLE usr     ALTER fail_tm   TYPE TIMESTAMP(0) USING to_timestamp(fail_tm)::timestamp(0);
-ALTER TABLE usr_sid ALTER login_tm  TYPE TIMESTAMP(0) USING to_timestamp(login_tm)::timestamp(0);
-ALTER TABLE usr_log ALTER tm        TYPE TIMESTAMP(0) USING to_timestamp(tm)::timestamp(0);
+ALTER TABLE usr     ALTER login_tm TYPE TIMESTAMP(0) USING to_timestamp(login_tm)::timestamp(0);
+ALTER TABLE usr     ALTER fail_tm  TYPE TIMESTAMP(0) USING to_timestamp(fail_tm)::timestamp(0);
+ALTER TABLE usr_sid ALTER login_tm TYPE TIMESTAMP(0) USING to_timestamp(login_tm)::timestamp(0);
+ALTER TABLE usr_log ALTER tm       TYPE TIMESTAMP(0) USING to_timestamp(tm)::timestamp(0);
 ALTER TABLE usr_sid ALTER login_tm SET DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE usr_log ALTER tm       SET DEFAULT CURRENT_TIMESTAMP;
 
