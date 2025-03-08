@@ -1,10 +1,10 @@
 use strict;
 #-------------------------------------------------------------------------------
 # skeleton compiler
-#						(C)2006-2024 nabe@abk
+#						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.15';
+our $VERSION = '3.16';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -121,55 +121,6 @@ my %BlockStatement = map { $_ => 1} qw(
 );
 
 #///////////////////////////////////////////////////////////////////////////////
-# inline functions
-#///////////////////////////////////////////////////////////////////////////////
-# arg = minimal arguments
-#
-my %InlineFuncs = (
-	match	=>	{ f=>'#0 =~ m!%1! ? [$&,$1,$2,$3,$4,$5,$6,$7,$8,$9] : undef', arg=>2, min=>'?', max=>'=~' },
-	replace =>	{ f=>'#0 =~ s!%1!%2!rg',arg=>3, min=>'=~', max=>'=~' },
-	replace_dest =>	{ f=>'#0 =~ s!%1!%2!g',	arg=>3, min=>'=~', max=>'=~' },
-	tr =>		{ f=>'#0 =~ tr!%1!%2!r',arg=>3, min=>'=~', max=>'=~' },
-	tr_dest =>	{ f=>'#0 =~ tr!%1!%2!',	arg=>3, min=>'=~', max=>'=~' },
-
-	is_int	=> { f=>'#0 =~ /^-?\d+$/',	arg=>1, min=>'=~', max=>'=~' },
-	is_array=> { f=>"ref(#0) eq 'ARRAY'",	arg=>1, min=>'eq' },
-	is_hash => { f=>"ref(#0) eq 'HASH'",	arg=>1, min=>'eq' },
-	from_to => { f=>'[#0..#1]',		arg=>2, max=>'..' },
-	into    => { f=>'%{#0}=(%{#0},%{#1})',	arg=>2, min=>'='  },
-
-	file_exists =>	{ f=>'-e #0', arg=>1, min=>'-e', max=>'-e' },
-	file_readable=>	{ f=>'-r #0', arg=>1, min=>'-r', max=>'-r' },
-	file_writable=>	{ f=>'-w #0', arg=>1, min=>'-w', max=>'-w' },
-	file_size =>	{ f=>'-s #0', arg=>1, min=>'-s', max=>'-s' },
-
-	new_hash=> { f=>'{ _order=>[] }', arg=>0 },
-	sref	=> { f=>'\(my $Z = #0)',  arg=>1 },
-	weaken	=> { f=>'Scalar::Util::weaken(#0)', arg=>1 }
-);
-
-#///////////////////////////////////////////////////////////////////////////////
-# inline if() functions
-#///////////////////////////////////////////////////////////////////////////////
-#	'ifxxx(exp, a, b, ... )' rewrite to 'if(exp) { xxx(a, b, ...); }'
-#
-my %InlineIf = map { $_ => 1} qw(
-	ifbreak ifcontinue ifbreak_clear ifsuperbreak ifsuperbreak_clear
-	ifjump ifjump_clear ifsuperjump ifsuperjump_clear
-	ifcall ifredirect ifform_error ifform_clear
-	ifmsg ifmessage ifnotice
-
-	ifpush ifpop ifshift ifunshift
-	ifpush_hash ifunshift_hash ifdelete_hash
-
-	ifset_cookie ifclear_cookie
-	ifset_header ifset_lastmodified
-	ifset_content_type ifset_status
-
-	ifnext iflast ifreturn ifumask ifprint
-);
-
-#///////////////////////////////////////////////////////////////////////////////
 # Perl's core functions
 #///////////////////////////////////////////////////////////////////////////////
 # values)
@@ -195,43 +146,71 @@ use constant CF_return_array	=> 2;
 use constant CF_control		=> 4;
 
 #///////////////////////////////////////////////////////////////////////////////
+# inline if() functions
+#///////////////////////////////////////////////////////////////////////////////
+#	'ifxxx(exp, a, b, ... )' rewrite to 'if(exp) { xxx(a, b, ...); }'
+#
+my %InlineIf = map { $_ => 1} qw(
+	ifbreak ifcontinue ifbreak_clear ifsuperbreak ifsuperbreak_clear
+	ifjump ifjump_clear ifsuperjump ifsuperjump_clear
+	ifcall ifredirect ifform_error ifform_clear
+	ifmsg ifmessage ifnotice
+
+	ifpush ifpop ifshift ifunshift
+	ifpush_hash ifunshift_hash ifdelete_hash
+
+	ifset_cookie ifclear_cookie
+	ifset_header ifset_lastmodified
+	ifset_content_type ifset_status
+
+	ifnext iflast ifreturn ifumask ifprint
+);
+
+#///////////////////////////////////////////////////////////////////////////////
+# inline functions
+#///////////////////////////////////////////////////////////////////////////////
+# arg = minimal arguments
+#
+my %InlineFuncs = (
+	match	=>	{ f=>'#0 =~ m!%1! ? [$&,$1,$2,$3,$4,$5,$6,$7,$8,$9] : undef', arg=>2, min=>'?', max=>'=~' },
+	replace =>	{ f=>'#0 =~ s!%1!%2!rg',arg=>3, min=>'=~', max=>'=~' },
+	replace_dest =>	{ f=>'#0 =~ s!%1!%2!g',	arg=>3, min=>'=~', max=>'=~' },
+	tr =>		{ f=>'#0 =~ tr!%1!%2!r',arg=>3, min=>'=~', max=>'=~' },
+	tr_dest =>	{ f=>'#0 =~ tr!%1!%2!',	arg=>3, min=>'=~', max=>'=~' },
+
+	is_int	=> { f=>'#0 =~ /^-?\d+$/',	arg=>1, min=>'=~', max=>'=~' },
+	is_array=> { f=>"ref(#0) eq 'ARRAY'",	arg=>1, min=>'eq' },
+	is_hash => { f=>"ref(#0) eq 'HASH'",	arg=>1, min=>'eq' },
+	from_to => { f=>'[#0..#1]',		arg=>2, max=>'..' },
+	into    => { f=>'%{#0}=(%{#0},%{#1})',	arg=>2, min=>'='  },
+
+	sort_num=> { f=>'[ sort({$a cmp $b} @{#0}) ]',			arg=>1 },
+	sort_str=> { f=>'[ sort(@{#0}) ]',				arg=>1 },
+	sort_hnum=>{ f=>'[ sort({$a->{#0} <=> $b->{#0}} @{#1}) ]',	arg=>2 },
+	sort_hstr=>{ f=>'[ sort({$a->{#0} cmp $b->{#0}} @{#1}) ]',	arg=>2 },
+	grep	=> { f=>'[ grep({ m!%0!} @{#1}) ]',			arg=>2 },
+	grep_not=> { f=>'[ grep({!m!%0!} @{#1}) ]',			arg=>2 },
+	array2flag=>{f=>'{ map { $_ => 1 } @{#0} }',			arg=>1 },
+
+	file_exists =>	{ f=>'-e #0', arg=>1, min=>'-e', max=>'-e' },
+	file_readable=>	{ f=>'-r #0', arg=>1, min=>'-r', max=>'-r' },
+	file_writable=>	{ f=>'-w #0', arg=>1, min=>'-w', max=>'-w' },
+	file_size =>	{ f=>'-s #0', arg=>1, min=>'-s', max=>'-s' },
+
+	new_hash=> { f=>'{ _order=>[] }', arg=>0 },
+	sref	=> { f=>'\(my $Z = #0)',  arg=>1 },
+	weaken	=> { f=>'Scalar::Util::weaken(#0)', arg=>1 }
+);
+
+#///////////////////////////////////////////////////////////////////////////////
 # builtin functions
 #///////////////////////////////////////////////////////////////////////////////
-my %BuiltinFunc; my $B=\%BuiltinFunc;
-#---------------------------------------------------------------------
-# string functios
-#---------------------------------------------------------------------
-$B->{string2ordary}=<<'FUNC';
-	my $txt = shift;
-	return [ map { ord($_) } split('', $txt) ];
-FUNC
-
-$B->{grep}=<<'FUNC';
-	my $x = shift;
-	my $ary = $_[0];
-	if (ref($ary) ne 'ARRAY') {
-		$ary = \@_;
-	}
-	return [ grep {/$x/} @$ary ];
-FUNC
-
+my %BuiltinFunc;
+do {
+my $B=\%BuiltinFunc;
 #---------------------------------------------------------------------
 # hash functions
 #---------------------------------------------------------------------
-$B->{array2flag}=<<'FUNC';
-	my $ary = shift;
-	if (!$ary || !@$ary) { return {} };
-	my %h = map {$_ => 1} @$ary;
-	return \%h;
-FUNC
-
-$B->{arrayhash2hash}=<<'FUNC';
-	my ($ary, $key) = @_;
-	if (!$ary || !@$ary) { return {} };
-	my %h = map {$_->{$key} => $_} @$ary;
-	return \%h;
-FUNC
-
 $B->{push_hash}=<<'FUNC';
 	my ($h, $key, $val) = @_;
 	if (ref($h) ne 'HASH') { return; };
@@ -263,21 +242,6 @@ $B->{delete_hash}=<<'FUNC';
 FUNC
 
 #---------------------------------------------------------------------
-# sort
-#---------------------------------------------------------------------
-$B->{sort_num}=<<'FUNC';
-	my ($ary,$key) = @_;
-	if ($key eq '') { return [ sort {$a<=>$b} @$ary ]; }
-	return [ sort {$a->{$key} <=> $b->{$key}} @$ary ];
-FUNC
-
-$B->{sort_str}=<<'FUNC';
-	my ($ary,$key) = @_;
-	if ($key eq '') { return [ sort {$a cmp $b} @$ary ]; }
-	return [ sort {$a->{$key} cmp $b->{$key}} @$ary ];
-FUNC
-
-#---------------------------------------------------------------------
 # other
 #---------------------------------------------------------------------
 $B->{esc_csv}=<<'FUNC';
@@ -293,6 +257,8 @@ $B->{concat}=<<'FUNC';
 	return \@ary;
 FUNC
 
+#---------------------------------------------------------------------
+};	# end of do {}
 #-------------------------------------------------------------------------------
 # operators
 #-------------------------------------------------------------------------------
