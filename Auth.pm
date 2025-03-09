@@ -39,7 +39,7 @@ sub new {
 		# log
 	#	stop_log	=> undef,	# Stop log to "$self->{table}_log" table.
 	#	log_func	=> undef,	# External log
-		log_text_max	=> 64,
+		log_text_max	=> 128,
 
 		# extend
 		user_change_cols=> ['name', 'email'],
