@@ -2551,7 +2551,7 @@ sub parse_error {
 	my $ROBJ = $self->{ROBJ};
 
 	if ($ROBJ) {
-		return $ROBJ->message($err, @_);
+		return $ROBJ->msg($err, @_);
 	}
 	return sprintf($err, @_);
 }

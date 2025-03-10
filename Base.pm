@@ -978,11 +978,6 @@ sub msg {
 	push(@{$self->{Msg}}, $msg);
 	return $msg;
 }
-sub message {			# compatibility
-	my $self = shift;
-	$self->warning('Using "message()" instead of "msg()" from %s in %s', $self->make_call_from(), $self->{CurrentSrc});
-	return $self->msg(@_);
-}
 sub clear_msg {
 	my $self  = shift;
 	return $self->_clear_msg('Msg', @_);
@@ -990,10 +985,10 @@ sub clear_msg {
 sub _clear_msg {
 	my $self = shift;
 	my $type = shift;
-	my $chain = shift || "<br>\n";
-	my $msg   = $self->{$type};
+	my $ch   = shift || "<br>\n";
+	my $msg  = $self->{$type};
 	$self->{$type} = [];
-	return $chain =~ /%m/ ? join('', map { $chain =~ s/%m/$_/rg } @$msg) : join($chain, @$msg);
+	return $ch =~ /%m/ ? join('', map { $ch =~ s/%m/$_/rg } @$msg) : join($ch, @$msg);
 }
 
 sub warning {
@@ -1375,6 +1370,12 @@ sub normalize_dest {
 		$_ =~ s/[\x00-\x09\x0b-\x1f]//g;
 	}
 	return join('',@_);
+}
+
+sub join_msg {
+	my $self = shift;
+	my $ch   = shift;
+	return join($ch, grep { $_ ne '' } @_);
 }
 
 ################################################################################
