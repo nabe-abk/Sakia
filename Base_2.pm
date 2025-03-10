@@ -438,7 +438,7 @@ sub fwrite_hash {
 	my $append = $opt->{append};
 	foreach(keys(%$h)) {
 		my $val = $h->{$_};
-		if (ref $val || (!$append && $val eq '')) { next; }
+		if (ref($val)) { next; }
 		if ($_ =~ /[\r\n=]/ || substr($_,0,1) eq '*') { next; }
 		if (0 <= index($val, "\n")) {
 			my $bl = '__END_BLK__';
