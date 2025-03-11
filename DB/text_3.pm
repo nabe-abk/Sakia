@@ -20,7 +20,8 @@ my %TypeInfoAlias = (
 #-------------------------------------------------------------------------------
 sub create_table {
 	my $self = shift;
-	my ($table, $colums) = @_;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $_cols= shift;
 	my $ROBJ = $self->{ROBJ};
 
 	$table =~ s/\W//g;
@@ -54,7 +55,7 @@ sub create_table {
 	$self->{"$table.ref"}     = {};			# Referential constraints
 	$self->{"$table.serial"}  = 0;
 
-	foreach(@$colums) {
+	foreach(@$_cols) {
 		if ($_->{name} eq 'pkey') { next; }	# skip
 		my $err = $self->parse_column($table, $_, 'create');
 		if ($err) {
@@ -96,7 +97,7 @@ sub parse_column {
 	my $h    = shift;
 	my $is_create = shift;
 
-	my $col = $h->{name};
+	my $col = $h->{name} =~ tr/A-Z/a-z/r;
 	$col =~ s/\W//g;
 	if ($col eq '') {
 		$self->error('Illegal column name: %s', $col);
@@ -122,7 +123,7 @@ sub parse_column {
 	if ($h->{unique})   { $self->{"$table.unique"} ->{$col}=1; }	# UNIQUE
 	if ($h->{not_null}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
 	if ($h->{index} || $h->{index_tbl} || $h->{unique}) {
-		$self->{"$table.index"}->{$col}=1;
+		$self->{"$table.index"}->{$col}=1;	# unique require index!
 	}
 
 	#
@@ -156,7 +157,7 @@ sub parse_column {
 	# Referential constraints
 	#
 	if ($h->{ref}) {
-		my $ref = $h->{ref};
+		my $ref = $h->{ref} =~ tr/A-Z/a-z/r;
 		if ($ref !~ /^(\w+)\.(\w+)/) {
 			$self->error('Column "%s" have invalid refernce: %s', $col, $h->{ref});
 			return 31;
@@ -188,7 +189,8 @@ sub parse_column {
 # drop table
 #-------------------------------------------------------------------------------
 sub drop_table {
-	my ($self, $table) = @_;
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
@@ -246,13 +248,15 @@ sub rebuild_index {
 }
 
 ################################################################################
-# optional functions
+# support functions
 ################################################################################
 #-------------------------------------------------------------------------------
 # add column
 #-------------------------------------------------------------------------------
 sub add_column {
-	my ($self, $table, $h) = @_;
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $h    = shift;
 	my $ROBJ = $self->{ROBJ};
 
 	# load index
@@ -278,7 +282,9 @@ sub add_column {
 # drop column
 #-------------------------------------------------------------------------------
 sub drop_column {
-	my ($self, $table, $col) = @_;
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
 	my $ROBJ = $self->{ROBJ};
 	$table  =~ s/\W//g;
 	$col    =~ s/\W//g;
@@ -329,7 +335,9 @@ sub drop_column {
 # add index
 #-------------------------------------------------------------------------------
 sub add_index {
-	my ($self, $table, $col) = @_;
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
 	my $ROBJ = $self->{ROBJ};
 
 	# load index
@@ -360,6 +368,61 @@ sub add_index {
 	$self->save_backup_index($table);
 
 	return 0;
+}
+
+################################################################################
+# admin functions
+################################################################################
+#-------------------------------------------------------------------------------
+# get table list
+#-------------------------------------------------------------------------------
+sub get_tables {
+	my $self = shift;
+	my $dir  = $self->{dir};
+	my $ROBJ = $self->{ROBJ};
+
+	my $list = $ROBJ->search_files($dir, { dir_only=>1 });
+	return [ grep { $self->find_table($_) } map { s|/$||r } @$list ];
+}
+
+#-------------------------------------------------------------------------------
+# get table columns
+#-------------------------------------------------------------------------------
+sub get_colmuns_info {
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+
+	$table =~ s/\W//g;
+	if (! $self->load_index($table)) { return; }
+
+	my $cols    = $self->{"$table.cols"};
+	my $unique  = $self->{"$table.unique"};
+	my $notnull = $self->{"$table.notnull"};
+	my $default = $self->{"$table.default"};
+	my $ref     = $self->{"$table.ref"};
+	my $index   = $self->{"$table.index"};
+
+	my @cols;
+	foreach(keys(%$cols)) {
+		my $x = $default->{$_};
+		push(@cols, {
+			name	=> $_,
+			type	=> $cols->{$_}->{type},
+			unique	=> $unique->{$_}  ? 'YES' : 'NO',
+			notnull	=> $notnull->{$_} ? 'YES' : 'NO',
+			default	=> $x =~ /^#(.*)/ ? "'$1'" : $x,
+			ref	=> $ref->{$_},
+			index	=> $index->{$_}   ? 'YES' : 'NO'
+		});
+	}
+	return \@cols;
+}
+
+#-------------------------------------------------------------------------------
+# SQL console
+#-------------------------------------------------------------------------------
+sub sql_console {
+	return &sql_emulator(@_);
 }
 
 ################################################################################

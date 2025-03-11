@@ -1,27 +1,12 @@
 use strict;
 #-------------------------------------------------------------------------------
 package Sakia::DB::share_3;
-our $VERSION = $Sakia::DB::share::VERSION;
 
 use Exporter 'import';
 our @EXPORT = qw(
-	get_options
 	create_table_wrapper
+	sql_emulator
 );
-
-################################################################################
-# optional functions
-################################################################################
-my @optional_methods = qw(add_column drop_column add_index);
-
-sub get_options {
-	my $self=shift;
-	my %h;
-	foreach(@optional_methods) {
-		if ($self->can($_)) { $h{$_}=1; }
-	}
-	return \%h;
-}
 
 ################################################################################
 # create table wrapper
@@ -125,6 +110,18 @@ sub create_table_wrapper {
 	push(@cols, @{$ext || []});
 
 	return $self->create_table($table, \@cols);
+}
+
+################################################################################
+# call sql emulator
+################################################################################
+sub sql_emulator {
+	my $self = shift;
+	my $ROBJ = $self->{ROBJ};
+	if (!$self->{admin}) { return (undef, ['Cannot execute sql_emulator(). No permission.']); }
+
+	my $emu = $ROBJ->loadpm('DB::sql_emulator');
+	return $emu->sql_emulator($self, @_);
 }
 
 1;

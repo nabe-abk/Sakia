@@ -75,11 +75,13 @@ sub trace {
 	if (!$self->{TRACE}) { return; }
 
 	my $sql  = shift;
-	my @ary  = @{ shift || [] };
+	my @ary  = ref($_[0]) ? @{shift()} : @_;
 	my $ROBJ = $self->{ROBJ};
 
 	$sql =~ s/\?/@ary ? ($ary[0] =~ m|^\d+$| ? shift(@ary) : "'" . shift(@ary) . "'") : '?'/eg;
 	$sql =~ s/\t/    /g;
+	if ($self->{trace_hook}) { return &{$self->{trace_hook}}($sql); }
+
 	$ROBJ->_debug('['.$self->{DBMS}.'] '.$sql, 1);	## safe
 }
 sub error {
@@ -89,6 +91,8 @@ sub error {
 	if ($self->{begin}) {
 		$self->{begin}=-1;	# error
 	}
+	if ($self->{error_hook}) { return &{$self->{error_hook}}($err, @_); }
+
 	my $func = $self->{ignore_error} ? 'warning' : 'error';
 	$ROBJ->$func('['.$self->{DBMS}.'] '.$err, @_);
 }

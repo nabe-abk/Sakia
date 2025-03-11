@@ -1,11 +1,11 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Base system for Sakia-System
-#						Copyright(C)2005-2024 nabe@abk
+#						Copyright(C)2005-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base;
 #-------------------------------------------------------------------------------
-our $VERSION = '3.00';
+our $VERSION = '3.01';
 our $RELOAD;
 my %StatCache;
 my $StatCacheTM;
@@ -995,7 +995,7 @@ sub warning {
 	my $self  = shift;
 	my $msg  = $self->translate(@_);
 	$self->esc_dest($msg);
-	push(@{$self->{Debug}}, '[WARN] ' . $msg);
+	push(@{$self->{Debug}}, '[Warning] ' . $msg);
 	return $msg;
 }
 
@@ -1226,15 +1226,16 @@ sub flock {
 #-------------------------------------------------------------------------------
 # Search files
 #-------------------------------------------------------------------------------
-#	$opt->{ext}	file's extension
-#	$opt->{all}=1	include '.*' files
-#	$opt->{dir}=1	include directory
-#	$opt->{dir}=2	directory only
-
+#	$opt->{ext}		file's extension
+#	$opt->{all}		include '.*' files
+#	$opt->{dir}		include directory
+#	$opt->{dir_only}	exclude non directory
+#
 sub search_files {
 	my $self = shift;
 	my $dir  = shift;
-	my $opt  = shift;
+	my $opt  = shift || {};
+	$opt->{dir} ||= $opt->{dir_only};
 
 	opendir(my $fh, $dir) || return [];
 	my $ext = $opt->{ext};
@@ -1249,7 +1250,7 @@ sub search_files {
 		if ($_ eq '.' || $_ eq '..')  { next; }
 		if (!$opt->{all} && substr($_,0,1) eq '.') { next; }
 		my $isDir = -d "$dir$_";
-		if ((!$opt->{dir} && $isDir) || ($opt->{dir}==2 && !$isDir)) { next; }
+		if ((!$opt->{dir} && $isDir) || ($opt->{dir_only} && !$isDir)) { next; }
 		if ($ext && ($_ !~ /(\.\w+)$/ || !$ext->{$1})) { next; }
 		push(@filelist, $_ . ($isDir ? '/' : ''));
 	}

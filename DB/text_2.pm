@@ -13,8 +13,9 @@ our $ErrInvalidVal;
 #-------------------------------------------------------------------------------
 sub insert {
 	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $h    = shift;
 	my $ROBJ = $self->{ROBJ};
-	my ($table, $h) = @_;
 	$table =~ s/\W//g;
 
 	my $db = $self->load_index_for_edit($table);
@@ -70,7 +71,8 @@ sub insert {
 # generate pkey
 #-------------------------------------------------------------------------------
 sub generate_pkey {
-	my ($self, $table) = @_;
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
@@ -147,7 +149,7 @@ sub generate_pkey {
 #-------------------------------------------------------------------------------
 sub update_match {
 	my $self = shift;
-	my $table= shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
 	my $h    = shift;
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
@@ -263,7 +265,7 @@ sub update_match {
 #-------------------------------------------------------------------------------
 sub delete_match {
 	my $self = shift;
-	my $table= shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
 	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
@@ -315,17 +317,20 @@ sub select_by_group {
 	#-------------------------------------------------------------
 	my %w = %$h;
 	delete $w{sort};
-	delete $w{sort_rev};
 	delete $w{offset};
 	delete $w{limit};
 
 	# group by
-	my $group_col = $h->{group_by};
+	my $group_col = $h->{group_by} =~ tr/A-Z/a-z/r;
 	$group_col =~ s/[^\w\.]//g;
 
 	my @sum_cols = ref($h->{sum_cols}) ? @{$h->{sum_cols}} : ( $h->{sum_cols} eq '' ? () : ($h->{sum_cols}) );
 	my @max_cols = ref($h->{max_cols}) ? @{$h->{max_cols}} : ( $h->{max_cols} eq '' ? () : ($h->{max_cols}) );
 	my @min_cols = ref($h->{min_cols}) ? @{$h->{min_cols}} : ( $h->{min_cols} eq '' ? () : ($h->{min_cols}) );
+
+	foreach(@sum_cols, @max_cols, @min_cols) {
+		$_ =~ tr/A-Z/a-z/;
+	}
 
 	#-------------------------------------------------------------
 	# prase join
@@ -426,10 +431,7 @@ sub select_by_group {
 			$_ =~ s/^(-?)\w+\.(\w+)/$1/g;
 		}
 
-		my ($sort_func, $cols) = $self->generate_sort_func($table, {
-			sort	=> \@ary,
-			sort_rev=> $h->{sort_rev}
-		});
+		my ($sort_func, $cols) = $self->generate_sort_func($table, { sort => \@ary });
 		@ret = sort $sort_func @ret;
 	}
 
@@ -637,6 +639,7 @@ sub check_column_data {
 	my $err;
 	foreach(keys(%$h)) {
 		my $c  = $_ =~ /^(\*)(.*)/ ? $2 : $_;
+		$c =~ tr/A-Z/a-z/;
 		my $info = $cols->{$c};
 		if (!$info) {
 			$self->error($ErrNotFoundCol, $table, $c);
@@ -669,6 +672,10 @@ sub check_column_data {
 
 			# 0x23 = '#'
 			$new{$_} = ord($v)==0x23 ? substr($v,1) : $self->load_sql_context($table, $_, $v);
+		}
+		foreach(keys(%$cols)) {
+			if ($_ eq 'pkey' || exists($new{$_})) { next; }
+			$new{$_} = undef;
 		}
 	}
 
@@ -718,7 +725,7 @@ sub load_and_generate_where {
 	my %in;
 	my $err;
 	while(@_) {
-		my $col = shift;
+		my $col = shift	=~ tr/A-Z/a-z/r;
 		my $val = shift;
 		my $not = '';
 		if (!defined $col) { last; }
@@ -742,10 +749,8 @@ sub load_and_generate_where {
 		#
 		# check value
 		#
-		if ($val ne '') {
-			$val = $self->check_value_for_match($table, $col, $val, $info);
-			if (!defined $val) { $err=1; }
-		}
+		$val = $self->check_value_for_match($table, $col, $val, $info);
+		if (!defined $val) { $err=1; }
 
 		#
 		# generate function
@@ -755,7 +760,7 @@ sub load_and_generate_where {
 			push(@cond, "${not}exists\$in->{$col}->{\$h->{$col}}");
 			next;
 		}
-		if ($info->{is_str}) {		# string
+		if ($val eq '' || $info->{is_str}) {		# string
 			$val =~ s/([\\'])/\\$1/g;
 			push(@cond, $not ? "\$h->{$col}ne'$val'" : "\$h->{$col}eq'$val'");
 			next;

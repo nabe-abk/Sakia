@@ -1,7 +1,7 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Text database
-#						(C)2005-2024 nabe@abk
+#						(C)2005-2025 nabe@abk
 #-------------------------------------------------------------------------------
 # Note) Avoid destroying the internal hash array $db when returning values.
 #
@@ -11,7 +11,7 @@ package Sakia::DB::text;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
 #-------------------------------------------------------------------------------
-our $VERSION = '1.50';
+our $VERSION = '1.60';
 our %IndexCache;
 our $ErrNotFoundCol = 'On "%s" table, not found "%s" column.';
 our $ErrInvalidVal  = 'On "%s" table, invalid value of "%s" column. "%s" is not %s.';
@@ -60,7 +60,8 @@ sub new {
 		%{ $opt || {}},		# options
 		ROBJ	=> $ROBJ,
 		DBMS	=> 'TextDB',
-		ID	=> "text.$dir"
+		ID	=> "text.$dir",
+		is_TDB	=> 1
 	}, $class);
 
 	if (!-e $dir) { $ROBJ->mkdir($dir); }
@@ -192,6 +193,7 @@ sub select {
 	my %join_keymap;	# main table pkey to join table's line hash data
 	my %join_req_all;	# require all the data from the joined table for return value
 	my %join_colname;	# column name of return value to joined table's name and column
+	my @jcols_all;		# join colmuns for process. ex)tbl.id tbl.name ...etc
 	if ($h->{ljoin}) {
 		# copy all table data
 		my @ary;
@@ -263,6 +265,7 @@ sub select {
 					return [];
 				}
 
+				push(@jcols_all, $_);
 				$jcols{$2}=1;
 				if (!$idx->{$2}) { $req_all=1; }
 			}
@@ -308,6 +311,16 @@ sub select {
 					}
 				}
 			}
+		}
+	}
+	#-----------------------------------------------------------------------
+	# sort colmuns table name check
+	#-----------------------------------------------------------------------
+	foreach(@$sort) {
+		if ($_ !~ /^(\w+)\.\w+/) { next; }
+		if (!$names{$1}) {
+			$self->error('Table name not found: %s', $_);
+			return [];
 		}
 	}
 
@@ -387,30 +400,30 @@ sub select {
 			foreach(@match) {
 				my $v    = $h->{match}->{$_};
 				my $info = $all_cols->{$_};
-				if ($v ne '') {
-					$v = $self->check_value_for_match($table, $_, $v, $info);
-					if (!defined $v) { $err=1; }
-				}
+
+				$v = $self->check_value_for_match($table, $_, $v, $info);
+				if (!defined $v) { $err=1; }
+
 				if (ref($v) eq 'ARRAY') {
 					$match_h{$_} = { map {$_=>1} @$v };
 					push(@cond, "exists\$match_h->{$_}->{\$_->{$_}}");
 					next;
 				}
-				push(@cond, "\$_->{$_}" . ($info->{is_str} ? "eq'$v'" : "==$v"));
+				push(@cond, "\$_->{$_}" . ($info->{is_str} || $v eq '' ? "eq'$v'" : "==$v"));
 			}
 			foreach (@not_match) {
 				my $v    = $h->{not_match}->{$_};
 				my $info = $all_cols->{$_};
-				if ($v ne '') {
-					$v = $self->check_value_for_match($table, $_, $v, $info);
-					if (!defined $v) { $err=1; }
-				}
+
+				$v = $self->check_value_for_match($table, $_, $v, $info);
+				if (!defined $v) { $err=1; }
+
 				if (ref($v) eq 'ARRAY') {
 					$match_h{$_} = { map {$_=>1} @$v };
 					push(@cond, "!exists\$match_h->{$_}->{\$_->{$_}}");
 					next;
 				}
-				push(@cond, "\$_->{$_}" . ($info->{is_str} ? "ne'$v'" : "!=$v"));
+				push(@cond, "\$_->{$_}" . ($info->{is_str} || $v eq '' ? "ne'$v'" : "!=$v"));
 			}
 			foreach (@flag) {
 				my $v    = $flags->{$_};
@@ -602,8 +615,11 @@ FUNCTION_TEXT
 			$func .= "\$m$_\->{\$pkey} &&= \$self->read_rowfile('$names{$_}', \$m$_\->{\$pkey});\n";
 		}
 		if (!$sel_cols) {
-			$func .= "delete \$_->{'*'};\n";	# if exists join $db is deep copy,
-		}						# therfore can break data.
+			$func .= "delete \$_->{'*'};\n";	# if exists join $db is deep copy, therfore can break data.
+			foreach(@jcols_all) {
+				$func .= "delete \$_->{'$_'};\n";
+			}
+		}
 		$func .= '$_ = {' . "\n";
 		if ($sel_cols) {
 			foreach(@$sel_cols) {
@@ -654,7 +670,7 @@ FUNCTION_TEXT
 #-------------------------------------------------------------------------------
 sub parse_table_name {
 	my $self = shift;
-	my $tbl  = shift;
+	my $tbl  = shift =~ tr/A-Z/a-z/r;
 	my $names= shift;
 	if ($tbl =~ /^(\w+) +(\w+)$/) {
 		return ($1, $2);
@@ -674,11 +690,13 @@ sub check_value_for_match {
 	my $info = shift;
 	my $check= $info->{check};
 
+	if ($v eq '') { return ''; }	# is null
+
 	if (ref($v) eq 'ARRAY') {
 		my @ary = @$v;
 		foreach(@ary) {
 			my $org = $_;
-			if ($_ ne '' && !&$check($_)) {
+			if (!&$check($_)) {
 				$self->error($ErrInvalidVal, $table, $col, $org, $info->{type});
 				return;
 			}
@@ -699,21 +717,19 @@ sub check_value_for_match {
 #-------------------------------------------------------------------------------
 sub generate_sort_func {
 	my ($self, $table, $h, $tname) = @_;
-	my @sort = ref($h->{sort}    ) ? @{$h->{sort}    } : ($h->{sort}     eq '' ? () : ($h->{sort}    ));
-	my @rev  = ref($h->{sort_rev}) ? @{$h->{sort_rev}} : ($h->{sort_rev} eq '' ? () : ($h->{sort_rev}));
+	my @sort = ref($h->{sort}) ? @{ $h->{sort} } : ($h->{sort} eq '' ? () : ($h->{sort}));
 	my $cols = $self->{"$table.cols"};
 	my @cond;
-	foreach(0..$#sort) {
-		my $col = $sort[$_];
-		my $rev = $rev [$_];
-		if (ord($col) == 0x2d) {	# '-colname'
-			$col = $sort[$_] = substr($col, 1);
-			$rev = 1;
+	foreach(@sort) {
+		my $col = $_;
+		my $rev = ord($col) == 0x2d;
+		if ($rev) {
+			$col = $_ = substr($col, 1);
 		}
 		$col =~ s/[^\w\.]//g;
 		if ($col eq '') { next; }
 		if ($col =~ /^(\w+)\.(\w+)$/ && $1 eq $tname) {
-			$col = $sort[$_] = $2;
+			$col = $_ = $2;
 		}
 
 		my $op = $cols->{$col}->{is_str} ? 'cmp' : '<=>';
@@ -803,7 +819,9 @@ sub load_index {
 	# LINE 01: DB index file version
 	my $ver = $self->{"$table.version"} = int(shift(@$lines));	# Version
 	my $random;
-	if ($ver < 6) {
+	if ($ver > 6) {
+		die "TextDB Ver.$VERSION is DB file version $ver not support."
+	} elsif ($ver < 6) {
 		# Index parser for version 3 to 5.
 		$random = $self->parse_old_index($table, $index, $ver, $lines);
 	} else {
@@ -815,7 +833,7 @@ sub load_index {
 		my %cols = map { $_ => $TypeInfo{shift(@types)} } @allcols;
 		$self->{"$table.cols"} = \%cols;
 
-		$self->{"$table.unique"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };	# LINE 06: UNQUE columns
+		$self->{"$table.unique"}  = { map { $_ => 1} split(/\t/, shift(@$lines)) };	# LINE 06: UNQIUE columns
 		$self->{"$table.notnull"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };	# LINE 07: NOT NULL columns
 
 		# LINE 08: default values

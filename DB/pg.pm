@@ -1,14 +1,14 @@
 use strict;
 #-------------------------------------------------------------------------------
 # database module for PostgreSQL
-#						(C)2006-2024 nabe@abk
+#						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::DB::pg;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
 use DBI ();
 #-------------------------------------------------------------------------------
-our $VERSION = '1.50';
+our $VERSION = '1.60';
 my %DB_attr = (AutoCommit => 1, RaiseError => 0, PrintError => 0, PrintWarn => 0, pg_enable_utf8 => 0);
 #-------------------------------------------------------------------------------
 # check UTF8 bug
@@ -34,7 +34,6 @@ sub new {
 		__FINISH=> 1,
 		DBMS	=> 'PostgreSQL',
 		ID	=> "pg.$db",
-
 		exists_table_cache => {}
 	}, $class);
 
@@ -339,16 +338,15 @@ sub generate_select_where {
 #-------------------------------------------------------------------------------
 sub generate_order_by {
 	my ($self, $h) = @_;
-	my $sort = ref($h->{sort}    ) ? $h->{sort}     : [ $h->{sort}     ];
-	my $rev  = ref($h->{sort_rev}) ? $h->{sort_rev} : [ $h->{sort_rev} ];
+	my $sort = ref($h->{sort}) ? $h->{sort} : [ $h->{sort} ];
 
 	my $sql='';
 	if ($h->{RDB_order} ne '') {
 		$sql .= ' ' . $h->{RDB_order} . ',';
 	}
-	foreach(0..$#$sort) {
-		my $col = $sort->[$_];
-		my $rev = $rev->[$_] || ord($col) == 0x2d;	# '-colname'
+	foreach(@$sort) {
+		my $col = $_;
+		my $rev = ord($col) == 0x2d;	# '-colname'
 		$col =~ s/[^\w\.]//g;
 		if ($col eq '') { next; }
 		$sql .= ' ' . $col . ($rev ? ' DESC' : '') . ' NULLS LAST,';

@@ -162,7 +162,7 @@ sub drop_table {
 }
 
 ################################################################################
-# optional functions
+# support functions
 ################################################################################
 #-------------------------------------------------------------------------------
 # add column
@@ -249,6 +249,96 @@ sub add_index {
 	}
 
 	return 0;
+}
+
+################################################################################
+# admin functions
+################################################################################
+#-------------------------------------------------------------------------------
+# get table list
+#-------------------------------------------------------------------------------
+sub get_tables {
+	my $self = shift;
+	my $dbh  = $self->{dbh};
+
+	my $sql = "SHOW TABLES";
+	my $sth = $dbh->prepare($sql);
+	$self->trace($sql);
+	$sth && $sth->execute();
+	if (!$sth || $dbh->err) {
+		$self->error($sql);
+		$self->error($dbh->errstr);
+		return;
+	}
+
+	my $ary = $sth->fetchall_arrayref();
+	return [ map { $_->[0] } @$ary ];
+}
+
+#-------------------------------------------------------------------------------
+# get table columns
+#-------------------------------------------------------------------------------
+sub get_colmuns_info {
+	my $self = shift;
+	my $table= shift;
+	my $dbh  = $self->{dbh};
+	$table  =~ s/\W//g;
+	if ($table eq '') { return 9; }
+
+	my $sql = "SHOW COLUMNS FROM $table";
+	my $sth = $dbh->prepare($sql);
+	$self->trace($sql);
+	$sth && $sth->execute();
+	if (!$sth || $dbh->err) {
+		$self->error($sql);
+		$self->error($dbh->errstr);
+		return;
+	}
+	my $cols = $sth->fetchall_arrayref({});
+
+	my $sql = "SHOW INDEX FROM $table";
+	my $sth = $dbh->prepare($sql);
+	$self->trace($sql);
+	$sth && $sth->execute();
+	if (!$sth || $dbh->err) {
+		$self->error($sql);
+		$self->error($dbh->errstr);
+		return;
+	}
+	my $ary = $sth->fetchall_arrayref({});
+	my %h   = map { $_->{Column_name} => $_ } @$ary;
+	foreach(@$cols) {
+		my $x = $h{$_->{Field}} || {};
+		$_->{Key_name}   = $x->{Key_name};
+		$_->{Index_type} = $x->{Index_type};
+	}
+	return $cols;
+}
+
+#-------------------------------------------------------------------------------
+# SQL console
+#-------------------------------------------------------------------------------
+sub sql_console {
+	my $self = shift;
+	my $sql  = shift;
+	my $dbh  = $self->{dbh};
+	if (!$self->{admin}) { return; }
+
+	my @log;
+
+	my $sth = $dbh->prepare($sql);
+	$sth && $sth->execute();
+	if (!$sth || $dbh->err) {
+		push(@log, split(/\n/, $dbh->errstr));
+		return (undef, \@log);
+	}
+	push(@log, "Success");
+
+	if (0 <= $sth->rows) {
+		push(@log, "rows: " . $sth->rows);
+	}
+	my $ary = $sth->fetchall_arrayref({});
+	return ($ary, \@log);
 }
 
 1;
