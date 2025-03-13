@@ -98,11 +98,18 @@ sub dump_localvar_stack {
 	my $st   = shift;
 	my $msg  = shift;
 	my $ls   = $st->{local_st} || [];
-	$msg && print "$msg\n";
+	$msg && print "\t$msg\n";
 	foreach(0..$#$ls) {
-		print "local[$_] " . join(' ', keys(%{$ls->[$_]})) . "\n";
+		print "\t[lv-stack($_)] " . join(' ', keys(%{$ls->[$_]})) . "\n";
 	}
-	print "current: " . join(' ', keys(%{$st->{local}})) . "\n";
+	print "\t[lv-stack(" . ($#$ls+1) . ")] " . join(' ', keys(%{$st->{local} || {}})) . "\n";
+}
+
+sub dump_current_localvar {
+	my $self = shift;
+	my $st   = shift;
+	my $ls   = $st->{local_st} || [];
+	print "\t[lv-stack(" . ($#$ls+1) . ")] " . join(' ', keys(%{$st->{local} || {}})) . "\n";
 }
 
 

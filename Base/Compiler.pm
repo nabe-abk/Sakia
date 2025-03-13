@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.16';
+our $VERSION = '3.17';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -111,7 +111,7 @@ my %Unit2Num = (K => 1024, M => 1024*1024, G => 1024*1024*1024, T => 1024*1024*1
 #	<$call("test", ifexec(...))>
 #	<$x = foreach(...)>
 #
-my %BlockStatement = map { $_ => 1} qw(
+my %BlockStatement = map { $_ => 1 } qw(
 	forexec
 	foreach
 	foreach_hash
@@ -933,6 +933,7 @@ main:	foreach my $line (@$lines) {
 			# save line info
 			$line->{end}       = 1;
 			$line->{end_code}  = $blk->{code};
+			$line->{block_type}= $blk->{type};
 			$line->{block_end} = $blk->{cnt};
 			$line->{block_lv}  = $block_lv-1;
 
@@ -987,6 +988,13 @@ main:	foreach my $line (@$lines) {
 				last;
 			}
 
+			my $blk_op = $BlockStatement{$po0} && $po0;
+			if ($1 eq '' && !$blk_op) {
+				$self->error_from($line, '"%s" is not allowed here.', 'begin');
+				delete $line->{poland};
+				last;
+			}
+
 			if (!$find) {
 				$find = 1;
 				$block_lv++;
@@ -1004,7 +1012,7 @@ main:	foreach my $line (@$lines) {
 				comple	=> $comple,
 				line	=> $line
 			};
-			$line->{block_state}= $BlockStatement{$po0};
+			$line->{block_state}= $blk_op;
 			$line->{ifexec}     = $ifexec;
 
 			$po->[$_] = "\x01begin" . $1 . '.' . $block_cnt;	# append block number
@@ -1046,6 +1054,7 @@ sub poland_to_expression {
 	$st->{local}    = { v => 1 };	# local variables hash
 	$st->{local_st} = [];		# local variables stack
 	$st->{builtin}  = {};		# used builtin functions
+	my %begin_funcs;		# passed begin_funcs's number
 
 	my $const = $st->{const};
 
@@ -1062,9 +1071,17 @@ sub poland_to_expression {
 		#---------------------------------------------------------------
 		# special lines
 		#---------------------------------------------------------------
+		if ($line->{block_type} eq '_func' && !$begin_funcs{$line->{block_end}}) {
+			$self->error_from($line, 'Skip the "end" corresponding to "begin_func" in the error line.');	## msg
+			next;
+		}
 		if ($line->{else} || $line->{end_code}) {
-			$self->pop_localvar_stack($st, $line->{else});
-			DEBUG_LV && $self->dump_localvar_stack($st, "pop");
+			if ($line->{else}) {
+				$self->restore_localvar($st);
+			} else {
+				$self->pop_localvar_stack($st);
+			}
+			DEBUG_LV && $self->dump_current_localvar($st);
 
 			$line->{exp}  = $line->{else} ? '} else {' : '}';
 			$line->{code} = 1;
@@ -1074,9 +1091,10 @@ sub poland_to_expression {
 			next;
 		}
 		if ($line->{elsif}) {
-			$self->pop_localvar_stack($st, 1);
-			DEBUG_LV &&  $self->dump_localvar_stack($st, "pop");
+			$self->restore_localvar($st);
 		}
+
+		DEBUG_LV && $self->dump_current_localvar($st);
 
 		#---------------------------------------------------------------
 		# convert main
@@ -1087,10 +1105,10 @@ sub poland_to_expression {
 		my $stype  =$st->{stype} = [];	# stack element type
 		my $sopl   =$st->{sopl}  = [];	# stack minimal operator level
 		my $poland =$st->{poland}= [];	# hack for inline functions
-	
+
 		my $local     = $st->{local};
 		my %local_bak = %$local;
-		$st->{begin_code}= 0;
+		$st->{begin_func_list} = [];
 
 		my @err;
 		p2e: foreach(0..$#$po) {
@@ -1149,20 +1167,14 @@ sub poland_to_expression {
 		#---------------------------------------------------------------
 		if ($line->{elsif}) {
 			my %h = %$local;
-			$local->{_bak} = \%h;	# renew backup for else
+			$local->{'*bak'} = \%h;		# renew backup for else
 		}
-		if ($st->{begin_code}) {
-			my $c = $st->{begin_code};
-
-			if ($line->{block_state}) {
-				# block_state is 'ifexec()/foreach()'.
-				# Local variables on the block statement are valid only within the block.
-				$st->{local} = \%local_bak;
-				$self->push_localvar_stack($st, $local, 1);
-				$c--;
-			}
-			$self->push_localvar_stack($st, \%local_bak, $c);
-			DEBUG_LV &&  $self->dump_localvar_stack($st, "push $c");
+		if ($line->{block_state}) {
+			# block_state is 'ifexec()/foreach()'.
+			# Local variables on the block statement are valid only within the block.
+			$st->{local} = \%local_bak;
+			$self->push_localvar_stack($st, $local);
+			DEBUG_LV && $self->dump_localvar_stack($st, "push for $line->{block_state}");
 		}
 
 		#---------------------------------------------------------------
@@ -1173,10 +1185,19 @@ sub poland_to_expression {
 
 			if ($line->{elsif}) {
 				$line->{out_with_code} = '} elsif(0) { ';
-			} elsif ($st->{begin_code}) {
+			} elsif ($line->{block_state}) {			# ifexec or foreach
 				$line->{out_with_code} = 'if(0) { ';
 			}
 			next;
+		}
+
+		#---------------------------------------------------------------
+		# begin func process
+		#---------------------------------------------------------------
+		foreach(@{$st->{begin_func_list}}) {
+			$begin_funcs{$_} = 1;
+			$self->push_localvar_stack($st, \%local_bak);
+			DEBUG_LV && $self->dump_localvar_stack($st, "push for begin_func");
 		}
 
 		#---------------------------------------------------------------
@@ -1210,24 +1231,24 @@ sub poland_to_expression {
 
 sub push_localvar_stack {
 	my $self = shift;
-	my ($st, $org, $c) = @_;
+	my ($st, $org) = @_;
 
-	my %bak = %$org;	# copy
-	foreach(1..$c) {
-		my %h = %$org;
-		$h{_bak} = \%bak;	# backup for else/elsif
-		push(@{$st->{local_st}}, $st->{local});
-		$st->{local} = \%h;
-	}
+	my %h = %$org;			# copy
+	$h{'*bak'} = $org;		# backup for else/elsif
+	push(@{$st->{local_st}}, $st->{local});
+	$st->{local} = \%h;
 }
+
 sub pop_localvar_stack {
 	my $self = shift;
-	my ($st, $else) = @_;
-	if (!$else) {
-		$st->{local} = pop(@{$st->{local_st}});
-		return;
-	}
-	my %h = %{$st->{local}->{_bak} || {}};
+	my $st   = shift;
+	$st->{local} = pop(@{$st->{local_st}});
+}
+
+sub restore_localvar {
+	my $self = shift;
+	my $st   = shift;
+	my %h = %{$st->{local}->{'*bak'} || {}};
 	$st->{local} = \%h;
 }
 
@@ -1411,8 +1432,7 @@ sub p2e_function {
 	# 入れ子を許可しない関数
 	#-----------------------------------------------------------------------
 	if (!$st->{last_op} && $BlockStatement{$y}) {
-		$self->error_from($st->{line}, '"%s" cannot be written inside an expression.', $y);
-		return;
+		return (0,0,0, '"%s" cannot be written inside an expression.', $y);					## msg
 	}
 
 	#-----------------------------------------------------------------------
@@ -1449,9 +1469,9 @@ sub p2e_function {
 	# constant variable declaration
 	#-------------------------------------------------------
 	if ($y eq 'const' || $y eq 'constant') {
-		if ($xt ne 'obj')		{ return (0,0,0, 'Illegal constant format.'); }		## msg
-		if ($ReservedVars{$x})		{ return (0,0,0, 'This name is reserved: %s', $x); }	## msg
-		if ($x !~ /^[A-Za-z_]\w*$/)	{ return (0,0,0, 'Illegal constant name: %s', $x); }	# not needs
+		if ($xt ne 'obj')		{ return (0,0,0, 'Illegal constant format.'); }			## msg
+		if ($ReservedVars{$x})		{ return (0,0,0, 'This name is reserved: %s', $x); }		## msg
+		if ($x !~ /^[A-Za-z_]\w*$/)	{ return (0,0,0, 'Illegal constant name: %s', $x); }		## mskip
 		if ($st->{local}->{$x})		{ return (0,0,0, 'Already used as a local variable: %s', $x); }	## msg
 		return ($x, 'const_var');
 	}
@@ -1797,10 +1817,14 @@ sub get_element_type {
 		return (oct($el), 'const');
 	}
 
-	if ($el =~ /^\x01begin(?:_func)?\.\d+$/) {	# code block
-		$st->{begin_code}++;
+	if ($el =~ /^\x01begin\.\d+$/) {		# ifexec/foreach code block
 		return ($el, 'code');
 	}
+	if ($el =~ /^\x01begin_func\.(\d+)$/) {		# code block ref
+		push(@{$st->{begin_func_list}}, $1);
+		return ($el, 'code');
+	}
+
 	if ($el =~ /^\x01begin_(\w*).\d+$/) {
 		if ($1 eq 'array')  { return ($el, 'array');  }
 		if ($1 eq 'string') { return ($el, 'string'); }
