@@ -211,6 +211,13 @@ my $B=\%BuiltinFunc;
 #---------------------------------------------------------------------
 # hash functions
 #---------------------------------------------------------------------
+$B->{arrayhash2hash}=<<'FUNC';
+	my ($ary, $key) = @_;
+	if (!$ary || !@$ary) { return {} };
+	my %h = map {$_->{$key} => $_} @$ary;
+	return \%h;
+FUNC
+
 $B->{push_hash}=<<'FUNC';
 	my ($h, $key, $val) = @_;
 	if (ref($h) ne 'HASH') { return; };
