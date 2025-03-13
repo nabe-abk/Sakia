@@ -114,9 +114,8 @@ sub start {
 	}
 
 	if (-r $env) { $self->_call($env); }				# run .env file
-	$self->{ConfResult} = $self->_call($self->{ConfFile} || $conf);	# run .conf file
-
 	$self->init_tm();
+	$self->{ConfResult} = $self->_call($self->{ConfFile} || $conf);	# run .conf file
 	$self->init_path();
 
 	if (@{$self->{Error}}) {
@@ -138,7 +137,7 @@ sub init_tm {
 	my ($self, $tz) = @_;
 	my $h = $self->time2hash( $self->{TM} );
 	$self->{Now} = $h;
-	$self->{Timestamp} = $self->print_tm($h->{_ary});
+	$self->{Timestamp} = $self->print_ts($h->{_ary});
 }
 
 sub init_path {
@@ -1452,7 +1451,7 @@ sub tmlocal {
 #-------------------------------------------------------------------------------
 # print formatted time
 #-------------------------------------------------------------------------------
-# print_ts($UTC);		# Std SQL timestamp
+# print_ts($UTC);		# Standard SQL timestamp
 # print_tm($UTC);		# local
 # print_tmf($format, $UTC);	# with format
 #
