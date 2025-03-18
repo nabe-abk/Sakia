@@ -69,8 +69,7 @@ sub generate_pkey {
 		return 0;
 	}
 
-	my $pkey = $sth->fetchrow_array;
-	return $pkey;
+	return $sth->fetchrow_array;
 }
 
 #-------------------------------------------------------------------------------

@@ -78,6 +78,10 @@ sub sql_emu_select {
 		$self->error('SELECT need table name');
 		return;
 	}
+	if ($cols =~ /^version\(\)$/) {
+		$self->log('DB Version = %s', $DB->db_version());
+		return;
+	}
 
 	my %h;
 	my $col_star;
