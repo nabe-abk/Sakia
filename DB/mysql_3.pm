@@ -134,9 +134,15 @@ sub do_create_index {
 	# The length postfix required for MySQL's text column.
 	# This is not required on MariaDB.
 	#
-	my $len = $istext ? "(". int($self->{text_index_size}) .")" : '';
+	my $len = $istext && !$self->is_mariadb() ? "(". int($self->{text_index_size}) .")" : '';
 
 	return $self->do_sql("CREATE INDEX ${table}_${col}_idx ON $table($col$len)");
+}
+
+sub is_mariadb {
+	my $self  = shift;
+	if (exists $self->{is_mariadb}) { return $self->{is_mariadb}; }
+	return ($self->{is_mariadb} = $self->db_version() =~ /\bMariaDB\b/i);
 }
 
 #-------------------------------------------------------------------------------
