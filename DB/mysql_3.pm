@@ -236,7 +236,7 @@ sub db_version {
 
 	my $sth = $self->do_sql("SELECT version()");
 	if (!$sth) {
-		return '(fail)';
+		return '';
 	}
 	return $sth->fetchrow_array;
 }
