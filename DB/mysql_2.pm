@@ -8,8 +8,6 @@ package Sakia::DB::mysql;
 #-------------------------------------------------------------------------------
 sub insert {
 	my ($self, $table, $h) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my ($cols, $vals);
@@ -37,16 +35,10 @@ sub insert {
 	}
 
 	# execute
-	my $sql = "INSERT INTO $table($cols) VALUES($vals)";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, \@ary);
-	$sth && $sth->execute(@ary);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("INSERT INTO $table($cols) VALUES($vals)", @ary);
+	if (!$sth || $sth->rows != 1) {
 		return 0;
 	}
-	if ($sth->rows != 1) { return 0; }
 
 	return $pkey ? $pkey : $sth->{mysql_insertid};
 }
@@ -56,18 +48,11 @@ sub insert {
 #-------------------------------------------------------------------------------
 sub generate_pkey {
 	my ($self, $table) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	# find not null colmuns
-	my $sql = "show columns FROM $table WHERE `Null`='NO' AND `Key`!='PRI' AND `Default` is null";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("show columns FROM $table WHERE `Null`='NO' AND `Key`!='PRI' AND `Default` is null");
+	if (!$sth) {
 		return 0;
 	}
 	my @cols;
@@ -86,13 +71,8 @@ sub generate_pkey {
 	}
 
 	# insert dummy data
-	my $sql = "INSERT INTO $table(" . join(',', @cols) . ") VALUES(" . join(',', @vals) . ")";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("INSERT INTO $table(" . join(',', @cols) . ") VALUES(" . join(',', @vals) . ")");
+	if (!$sth) {
 		return 0;
 	}
 
@@ -100,10 +80,7 @@ sub generate_pkey {
 	my $pkey=$sth->{mysql_insertid};
 
 	# delete dummy data
-	$sql = "DELETE FROM $table WHERE pkey=$pkey";
-	$sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
+	$self->do_sql("DELETE FROM $table WHERE pkey=$pkey");
 
 	return $pkey;
 }
@@ -115,8 +92,6 @@ sub update_match {
 	my $self = shift;
 	my $table= shift;
 	my $h    = shift;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	# for set values
@@ -139,14 +114,8 @@ sub update_match {
 	if ($cols eq '') { return 0; }
 
 	my $where = $self->generate_where(\@ary, @_);
-
-	my $sql = "UPDATE $table SET $cols$where";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, \@ary);
-	$sth && $sth->execute( @ary );
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth   = $self->do_sql("UPDATE $table SET $cols$where", @ary);
+	if (!$sth) {
 		return 0;
 	}
 	return $sth->rows;
@@ -158,23 +127,14 @@ sub update_match {
 sub delete_match {
 	my $self = shift;
 	my $table= shift;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my @ary;
 	my $where = $self->generate_where(\@ary, @_);
-
-	my $sql = "DELETE FROM $table$where";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, \@ary);
-	$sth && $sth->execute( @ary );
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth   = $self->do_sql("DELETE FROM $table$where", @ary);
+	if (!$sth) {
 		return 0;
 	}
-
 	return $sth->rows;
 }
 
@@ -183,8 +143,6 @@ sub delete_match {
 ################################################################################
 sub select_by_group {
 	my ($self, $table, $h, $w) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 
 	#-----------------------------------------
 	# parse
@@ -231,12 +189,8 @@ sub select_by_group {
 	#-----------------------------------------
 	# execute
 	#-----------------------------------------
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, $ary);
-	$sth && $sth->execute(@$ary);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth   = $self->do_sql($sql, @$ary);
+	if (!$sth) {
 		return [];
 	}
 	return $sth->fetchall_arrayref({});

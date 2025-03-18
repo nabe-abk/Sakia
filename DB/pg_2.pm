@@ -8,8 +8,6 @@ package Sakia::DB::pg;
 #-------------------------------------------------------------------------------
 sub insert {
 	my ($self, $table, $h) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my ($cols, $vals);
@@ -39,38 +37,24 @@ sub insert {
 	}
 
 	# execute
-	my $sql = "INSERT INTO $table($cols) VALUES($vals)";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, \@ary);
-	$sth && $sth->execute(@ary);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("INSERT INTO $table($cols) VALUES($vals)", @ary);
+	if (!$sth || $sth->rows != 1) {
 		return 0;
 	}
-	if ($sth->rows != 1) { return 0; }
 
 	# if insert with pkey, set serial value
 	if ($pkey) {
-		$sql = "SELECT setval(pg_catalog.pg_get_serial_sequence('$table', 'pkey'), (SELECT max(pkey) FROM $table))";
-		$self->trace($sql);
-		$dbh->do($sql);
+		$self->do_sql("SELECT setval(pg_catalog.pg_get_serial_sequence('$table', 'pkey'), (SELECT max(pkey) FROM $table))");
 		return $pkey;
 	}
 
 	# if success return pkey
-	$sql = "SELECT lastval()";
-	$sth = $dbh->prepare($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SELECT lastval()");
+	if (!$sth) {
 		return 0;
 	}
 
-	my $pkey = $sth->fetchrow_array;
-	$sth->finish();
-	return $pkey;
+	return $sth->fetchrow_array;
 }
 
 #-------------------------------------------------------------------------------
@@ -78,21 +62,14 @@ sub insert {
 #-------------------------------------------------------------------------------
 sub generate_pkey {
 	my ($self, $table) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
-	my $sql = "SELECT nextval(pg_catalog.pg_get_serial_sequence('$table', 'pkey'))";
-	my $sth = $dbh->prepare($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SELECT nextval(pg_catalog.pg_get_serial_sequence('$table', 'pkey'))");
+	if (!$sth) {
 		return 0;
 	}
 
 	my $pkey = $sth->fetchrow_array;
-	$sth->finish();
 	return $pkey;
 }
 
@@ -103,8 +80,6 @@ sub update_match {
 	my $self = shift;
 	my $table= shift;
 	my $h    = shift;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	# for set values
@@ -127,14 +102,8 @@ sub update_match {
 	if ($cols eq '') { return 0; }
 
 	my $where = $self->generate_where(\@ary, @_);
-
-	my $sql = "UPDATE $table SET $cols$where";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, \@ary);
-	$sth && $sth->execute( @ary );
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth   = $self->do_sql("UPDATE $table SET $cols$where", @ary);
+	if (!$sth) {
 		return 0;
 	}
 	return $sth->rows;
@@ -146,23 +115,14 @@ sub update_match {
 sub delete_match {
 	my $self = shift;
 	my $table= shift;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my @ary;
 	my $where = $self->generate_where(\@ary, @_);
-
-	my $sql = "DELETE FROM $table$where";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, \@ary);
-	$sth && $sth->execute( @ary );
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth   = $self->do_sql("DELETE FROM $table$where", @ary);
+	if (!$sth) {
 		return 0;
 	}
-
 	return $sth->rows;
 }
 
@@ -171,8 +131,6 @@ sub delete_match {
 ################################################################################
 sub select_by_group {
 	my ($self, $table, $h, $w) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 
 	#-----------------------------------------
 	# parse
@@ -219,12 +177,8 @@ sub select_by_group {
 	#-----------------------------------------
 	# execute
 	#-----------------------------------------
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql, $ary);
-	$sth && $sth->execute(@$ary);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth   = $self->do_sql($sql, @$ary);
+	if (!$sth) {
 		return [];
 	}
 	return $sth->fetchall_arrayref({});
@@ -305,15 +259,15 @@ sub generate_where {
 sub do_sql {
 	my $self = shift;
 	my $sql  = shift;
-	my $ROBJ = $self->{ROBJ};
-
 	my $dbh = $self->{dbh};
 	$self->trace($sql, \@_);
+
 	my $sth = $dbh->prepare($sql);
 	$sth && $sth->execute(@_);
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
 		$self->error($dbh->errstr);
+		return;
 	}
 	return $sth;
 }

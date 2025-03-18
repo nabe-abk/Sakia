@@ -9,8 +9,6 @@ use Sakia::DB::share_3;
 #-------------------------------------------------------------------------------
 sub create_table {
 	my ($self, $table, $columns) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 	if ($table eq '') {
 		$self->error('Called create_table() with null table name.');
@@ -27,7 +25,7 @@ sub create_table {
 
 	my @vals;
 	my @index_cols;
-	my %text_col;
+	my %istext;
 	foreach(@$columns) {
 		if ($_->{name} eq 'pkey') {
 			if    ($_->{type} =~ /^bigserial$/i) { $cols[0] = 'pkey bigint NOT NULL AUTO_INCREMENT PRIMARY KEY'; }
@@ -43,7 +41,7 @@ sub create_table {
 		push(@cols, $sql);
 		push(@vals, @ary);
 		if ($is_text) {
-			$text_col{$col} = 1;
+			$istext{$col} = 1;
 		}
 
 		if (!$_->{unique} && $_->{index}) {
@@ -55,16 +53,11 @@ sub create_table {
 	#-----------------------------------------
 	# create
 	#-----------------------------------------
-	my $sql = "CREATE TABLE $table(" . join(",\n ", @cols) . ')';
-	if ($self->{engine}) {	# DB Engine
-		$sql .= " ENGINE=" . ($self->{engine} =~ s/\W//rg);
-	}
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute(@vals);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql(
+		"CREATE TABLE $table(" . join(",\n ", @cols) . ')'
+		. ($self->{engine} ? " ENGINE=" . ($self->{engine} =~ s/\W//rg) : '')
+	);
+	if (!$sth) {
 		return 1;
 	}
 
@@ -73,13 +66,9 @@ sub create_table {
 	#-----------------------------------------
 	# Note: (length) prefix required for text column. This is not required on MariaDB.
 	foreach(@index_cols) {
-		my $length = $text_col{$_} ? "(". int($self->{text_index_size}) .")" : '';
-		my $sql = "CREATE INDEX ${table}_${_}_idx ON $table($_$length)";
-		$dbh->do($sql);
-		$self->trace($sql);
-		if ($dbh->err) {
-			$self->error($sql);
-			$self->error($dbh->errstr);
+		my $sth = $self->do_create_index($table, $_, $istext{$_});
+		if (!$sth) {
+			$self->do_sql("DROP TABLE $table");
 			return 2;
 		}
 	}
@@ -136,20 +125,30 @@ sub parse_column {
 	return ($col, $sql, $is_text, @vals);
 }
 
+sub do_create_index {
+	my $self  = shift;
+	my $table = shift;
+	my $col   = shift;
+	my $istext= shift;
+	#
+	# The length postfix required for MySQL's text column.
+	# This is not required on MariaDB.
+	#
+	my $len = $istext ? "(". int($self->{text_index_size}) .")" : '';
+
+	return $self->do_sql("CREATE INDEX ${table}_${col}_idx ON $table($col$len)");
+}
+
 #-------------------------------------------------------------------------------
 # drop table
 #-------------------------------------------------------------------------------
 sub drop_table {
 	my ($self, $table) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
+	if ($table eq '') { return 9; }
 
-	my $sql = "DROP TABLE $table";
-	$dbh->do($sql);
-	if ($dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("DROP TABLE $table");
+	if (!$sth) {
 		return 1;
 	}
 
@@ -169,9 +168,6 @@ sub drop_table {
 #-------------------------------------------------------------------------------
 sub add_column {
 	my ($self, $table, $h) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
-
 	$table =~ s/\W//g;
 	if ($table eq '') { return 9; }
 
@@ -179,25 +175,15 @@ sub add_column {
 	if (!$col) { return; }	# error
 
 	# ALTER TABLE
-	$sql = "ALTER TABLE $table ADD COLUMN $sql";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute(@vals);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("ALTER TABLE $table ADD COLUMN $sql");
+	if (!$sth) {
 		return 1;
 	}
 
 	# CREATE INDEX table_colname_idx ON table (colname);
 	if (!$h->{unique} && $h->{index}) {
-		my $length = $is_text ? "(". int($self->{text_index_size}) .")" : '';
-		my $sql = "CREATE INDEX ${table}_${col}_idx ON $table($col$length)";
-		$dbh->do($sql);
-		$self->trace($sql);
-		if ($dbh->err) {
-			$self->error($sql);
-			$self->error($dbh->errstr);
+		my $sth = $self->do_create_index($table, $col, $is_text);
+		if (!$sth) {
 			return 2;
 		}
 	}
@@ -209,46 +195,27 @@ sub add_column {
 #-------------------------------------------------------------------------------
 sub drop_column {
 	my ($self, $table, $column) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table  =~ s/\W//g;
 	$column =~ s/\W//g;
 	if ($table eq '' || $column eq '') { return 9; }
 
-	my $sql = "ALTER TABLE $table DROP COLUMN $column";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
-		return 1;
-	}
-	return 0;
+	my $sth = $self->do_sql("ALTER TABLE $table DROP COLUMN $column");
+
+	return $sth ? 0 : 1;
 }
 
 #-------------------------------------------------------------------------------
 # add index
 #-------------------------------------------------------------------------------
 sub add_index {
-	my ($self, $table, $column) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
-	$table  =~ s/\W//g;
-	$column =~ s/\W//g;
-	if ($table eq '' || $column eq '') { return 9; }
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '') { return 9; }
 
-	my $sql = "CREATE INDEX ${table}_${column}_idx ON $table($column)";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
-		return 1;
-	}
+	my $sth = $self->do_create_index($table, $col);
 
-	return 0;
+	return $sth ? 0 : 1;
 }
 
 ################################################################################
@@ -259,15 +226,9 @@ sub add_index {
 #-------------------------------------------------------------------------------
 sub get_tables {
 	my $self = shift;
-	my $dbh  = $self->{dbh};
 
-	my $sql = "SHOW TABLES";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SHOW TABLES");
+	if (!$sth) {
 		return;
 	}
 
@@ -281,32 +242,22 @@ sub get_tables {
 sub get_colmuns_info {
 	my $self = shift;
 	my $table= shift;
-	my $dbh  = $self->{dbh};
 	$table  =~ s/\W//g;
 	if ($table eq '') { return 9; }
 
-	my $sql = "SHOW COLUMNS FROM $table";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SHOW COLUMNS FROM $table");
+	if (!$sth) {
 		return;
 	}
 	my $cols = $sth->fetchall_arrayref({});
 
-	my $sql = "SHOW INDEX FROM $table";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SHOW INDEX FROM $table");
+	if (!$sth) {
 		return;
 	}
 	my $ary = $sth->fetchall_arrayref({});
 	my %h   = map { $_->{Column_name} => $_ } @$ary;
+
 	foreach(@$cols) {
 		my $x = $h{$_->{Field}} || {};
 		$_->{Key_name}   = $x->{Key_name};
@@ -337,7 +288,7 @@ sub sql_console {
 	if (0 <= $sth->rows) {
 		push(@log, "rows: " . $sth->rows);
 	}
-	my $ary = $sth->fetchall_arrayref({});
+	my $ary = $sth->rows ? $sth->fetchall_arrayref({}) : [];
 	return ($ary, \@log);
 }
 

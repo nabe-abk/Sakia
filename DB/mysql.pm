@@ -170,7 +170,6 @@ sub select {
 			return [];
 		}
 		$hits = $sth->fetchrow_array;
-		$sth->finish();
 	}
 	return ($ret,$hits);
 }

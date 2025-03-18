@@ -9,8 +9,6 @@ use Sakia::DB::share_3;
 #-------------------------------------------------------------------------------
 sub create_table {
 	my ($self, $table, $columns) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 	if ($table eq '') {
 		$self->error('Called create_table() with null table name.');
@@ -47,13 +45,8 @@ sub create_table {
 	#-----------------------------------------
 	# create
 	#-----------------------------------------
-	my $sql = "CREATE TABLE $table(" . join(",\n ", @cols) . ')';
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute(@vals);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("CREATE TABLE $table(" . join(",\n ", @cols) . ')');
+	if (!$sth) {
 		return 1;
 	}
 
@@ -61,12 +54,8 @@ sub create_table {
 	# CREATE INDEX
 	#-----------------------------------------
 	foreach(@index_cols) {
-		my $sql = "CREATE INDEX ${table}_${_}_idx ON $table($_)";
-		$dbh->do($sql);
-		$self->trace($sql);
-		if ($dbh->err) {
-			$self->error($sql);
-			$self->error($dbh->errstr);
+		my $sth = $self->do_sql("CREATE INDEX ${table}_${_}_idx ON $table($_)");
+		if (!$sth) {
 			return 2;
 		}
 	}
@@ -123,15 +112,11 @@ sub parse_column {
 #-------------------------------------------------------------------------------
 sub drop_table {
 	my ($self, $table) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
+	if ($table eq '') { return 9; }
 
-	my $sql = "DROP TABLE $table";
-	$dbh->do($sql);
-	if ($dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("DROP TABLE $table");
+	if (!$sth) {
 		return 1;
 	}
 
@@ -151,9 +136,6 @@ sub drop_table {
 #-------------------------------------------------------------------------------
 sub add_column {
 	my ($self, $table, $h) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
-
 	$table =~ s/\W//g;
 	if ($table eq '') { return 9; }
 
@@ -161,24 +143,15 @@ sub add_column {
 	if (!$col) { return 10; }	# error
 
 	# ALTER TABLE
-	$sql = "ALTER TABLE $table ADD COLUMN $sql";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute(@vals);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("ALTER TABLE $table ADD COLUMN $sql");
+	if (!$sth) {
 		return 1;
 	}
 
 	# CREATE INDEX table_colname_idx ON table (colname);
 	if (!$h->{unique} && $h->{index}) {
-		my $sql = "CREATE INDEX ${table}_${col}_idx ON $table($col)";
-		$self->trace($sql);
-		$dbh->do($sql);
-		if ($dbh->err) {
-			$self->error($sql);
-			$self->error($dbh->errstr);
+		my $sth = $self->do_sql("CREATE INDEX ${table}_${col}_idx ON $table($col)");
+		if (!$sth) {
 			return 2;
 		}
 	}
@@ -190,22 +163,13 @@ sub add_column {
 #-------------------------------------------------------------------------------
 sub drop_column {
 	my ($self, $table, $column) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table  =~ s/\W//g;
 	$column =~ s/\W//g;
 	if ($table eq '' || $column eq '') { return 9; }
 
-	my $sql = "ALTER TABLE $table DROP COLUMN $column";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
-		return 1;
-	}
-	return 0;
+	my $sth = $self->do_sql("ALTER TABLE $table DROP COLUMN $column");
+
+	return $sth ? 0 : 1;
 }
 
 #-------------------------------------------------------------------------------
@@ -213,22 +177,13 @@ sub drop_column {
 #-------------------------------------------------------------------------------
 sub add_index {
 	my ($self, $table, $column) = @_;
-	my $dbh  = $self->{dbh};
-	my $ROBJ = $self->{ROBJ};
 	$table  =~ s/\W//g;
 	$column =~ s/\W//g;
 	if ($table eq '' || $column eq '') { return 9; }
 
-	my $sql = "CREATE INDEX ${table}_${column}_idx ON $table($column)";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
-		return 1;
-	}
-	return 0;
+	my $sth = $self->do_sql("CREATE INDEX ${table}_${column}_idx ON $table($column)");
+
+	return $sth ? 0 : 1;
 }
 
 ################################################################################
@@ -239,15 +194,9 @@ sub add_index {
 #-------------------------------------------------------------------------------
 sub get_tables {
 	my $self = shift;
-	my $dbh  = $self->{dbh};
 
-	my $sql = "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname NOT LIKE 'pg_%' AND schemaname != 'information_schema'";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname NOT LIKE 'pg_%' AND schemaname != 'information_schema'");
+	if (!$sth) {
 		return;
 	}
 
@@ -261,34 +210,23 @@ sub get_tables {
 sub get_colmuns_info {
 	my $self = shift;
 	my $table= shift;
-	my $dbh  = $self->{dbh};
 	$table  =~ s/\W//g;
 	if ($table eq '') { return 9; }
 
 	my $DB_NAME = $self->{ID} =~ /database=(\w+)/ ? $1 : undef;
-
 	my $cols= 'column_name, data_type, column_default, is_nullable, datetime_precision';
-	my $sql = "SELECT $cols FROM information_schema.columns WHERE table_catalog=? and table_name=? ORDER BY ordinal_position";
-	my $sth = $dbh->prepare($sql);
-	$self->trace($sql,    $DB_NAME, $table);
-	$sth && $sth->execute($DB_NAME, $table);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SELECT $cols FROM information_schema.columns WHERE table_catalog=? and table_name=? ORDER BY ordinal_position", $DB_NAME, $table);
+	if (!$sth) {
 		return;
 	}
 	my $cols = $sth->fetchall_arrayref({});
 
-	$sql = "SELECT indexname,indexdef FROM pg_indexes WHERE tablename=?";
-	$sth = $dbh->prepare($sql);
-	$self->trace($sql, $table);
-	$sth && $sth->execute($table);
-	if (!$sth || $dbh->err) {
-		$self->error($sql);
-		$self->error($dbh->errstr);
+	my $sth = $self->do_sql("SELECT indexname,indexdef FROM pg_indexes WHERE tablename=?", $table);
+	if (!$sth) {
 		return;
 	}
 	my $ary = $sth->fetchall_arrayref({});
+
 	my %h;
 	foreach(@$ary) {
 		if ($_->{indexdef} =~ /\((\w+)\)$/) { $h{$1}=$_; }

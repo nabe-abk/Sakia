@@ -570,6 +570,7 @@ $sth = $DB->do_sql("SELECT * FROM table WHERE pkey=? AND x=? OR y=?", @ary)
 
 Ret:
 	$sth	execute済の DBI $sth が返されます。
+		失敗時は undef が返ります。
 
 ================================================================================
 ●do_sql_rows
