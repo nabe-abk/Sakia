@@ -41,7 +41,8 @@ sub sql_emulator {
 		$self->{words} = [ split(/ /, $line) ];
 
 		my $cmd = $self->next_word();
-		if ($cmd eq '\D') { $cmd='SHOW'; }
+		if ($cmd eq '\D')       { $cmd='SHOW'; }
+		if ($cmd eq 'DESCRIBE') { $cmd='SHOW'; }
 
 		if    ($cmd eq 'SELECT') { $result=$self->sql_emu_select($DB); }
 		elsif ($cmd eq 'INSERT') { $self->sql_emu_insert($DB); }
@@ -49,7 +50,7 @@ sub sql_emulator {
 		elsif ($cmd eq 'DELETE') { $self->sql_emu_delete($DB); }
 		elsif ($cmd eq 'CREATE') { $self->sql_emu_create($DB); }
 		elsif ($cmd eq 'DROP')   { $self->sql_emu_drop  ($DB); }
-	#	elsif ($cmd eq 'ALTER')  { $self->sql_emu_alter ($DB); }
+		elsif ($cmd eq 'ALTER')  { $self->sql_emu_alter ($DB); }
 		elsif ($cmd eq 'BEGIN')  { $DB->begin();  }
 		elsif ($cmd eq 'COMMIT') { $DB->commit(); }
 		elsif ($cmd eq 'ROLLBACK'){$DB->rollback(); }
@@ -391,6 +392,16 @@ sub sql_emu_create {
 		my $r = $DB->create_table_wrapper($table, $cols);
 		$self->log('CREATE TABLE ' . ($r ? 'fail' : 'success'));
 
+	} elsif ($w eq 'INDEX') {
+		my $sql = $self->get_remain();
+		if ($sql !~ /^(\w+) ?\( ?(\w+) ?\)$/) {
+			$self->error('SQL error: %s', substr($sql, 0, 20));
+			$self->log('example: CREATE INDEX table(col)');
+			return;
+		}
+		my $r = $DB->create_index($1, $2);
+		$self->log('CREATE INDEX ' . ($r ? 'fail' : 'success'));
+
 	} else {
 		$self->error('SQL error: %s', $w);
 	}
@@ -412,10 +423,164 @@ sub sql_emu_drop {
 		my $r = $DB->drop_table($table);
 		$self->log('DROP TABLE ' . ($r ? 'fail' : 'success'));
 
+	} elsif ($w eq 'INDEX') {
+		my $sql = $self->get_remain();
+		if ($sql !~ /^(\w+) ?\( ?(\w+) ?\)$/) {
+			$self->error('SQL error: %s', substr($sql, 0, 20));
+			$self->log('example: DROP INDEX table(col)');
+			return;
+		}
+		my $r = $DB->drop_index($1, $2);
+		$self->log('DROP INDEX ' . ($r ? 'fail' : 'success'));
+
 	} else {
 		$self->error('SQL error: %s', $w);
 	}
 }
+
+#-------------------------------------------------------------------------------
+# ALTER TABLE
+#-------------------------------------------------------------------------------
+sub sql_emu_alter {
+	my $self = shift;
+	my $DB   = shift;
+	if (! $self->next_word_is('TABLE')) { return; }
+
+	my $table = $self->next_value_is_table();
+	if (!$table) { return; }
+
+	my $w = $self->next_word();
+	if ($w eq 'ALTER') {
+		return $self->sql_emu_alter_colmun($DB, $table);
+
+	} elsif ($w eq 'ADD') {
+		my $col = $self->next_word_is_colmun();
+		if (!$col) { return; }
+
+		my %h;
+		$h{name} = $col;
+		$h{type} = $self->next_word();
+
+		while(1) {
+			my $s = $self->next_word();
+			if ($s eq '') { last; }
+			if ($s eq 'UNIQUE')    { $h{unique}    = 1; next; }
+			if ($s eq 'INDEX')     { $h{index}     = 1; next; }
+			if ($s eq 'INDEX_TDB') { $h{index_tdb} = 1; next; }
+
+			if ($s eq 'NOT') {
+				if (! $self->next_word_is('NULL')) { return; }
+				$h{not_null} = 1;
+				next;
+			}
+			if ($s eq 'DEFAULT') {
+				if (!$self->get_words_len()) {
+					return $self->error('Need default value');
+				}
+				my $val = $self->next_value();
+				my ($r, $v) = $self->check_insert_value($val);
+				if (!defined $r) {
+					return $self->error('SQL error: %s', $val);
+				}
+				if ($r) {
+					$h{default_sql} = $v;
+				} else {
+					$h{default} = $v;
+				}
+				next;
+			}
+			if ($s eq 'REFERENCES' || $s eq 'REF') {
+				my $val = $self->next_value();
+				if ($val !~ /^(\w+) ?\((\w+)\)$/) {
+					return $self->error('SQL error: %s', $val);
+				}
+				$h{ref} = "$1.$2";
+				next;
+			}
+			return $self->error('SQL error: %s', $s);
+		}
+
+		my $r = $DB->add_column($table, \%h);
+		$self->log('ADD COLUMN ' . ($r ? 'fail' : 'success'));
+
+	} elsif ($w eq 'DROP') {
+		my $col = $self->next_word_is_colmun();
+		if (!$col) { return; }
+
+		my $r = $DB->drop_column($table, $col);
+		$self->log('DROP COLUMN ' . ($r ? 'fail' : 'success'));
+
+	} else {
+		$self->error('SQL error: %s', $w);
+	}
+}
+
+#-------------------------------------------------------------------------------
+# ALTER TABLE tbl ALTER column
+#-------------------------------------------------------------------------------
+sub sql_emu_alter_colmun {
+	my $self = shift;
+	my $DB   = shift;
+	my $table= shift;
+
+	my $col = $self->next_word_is_colmun();
+	if (!$col) { return; }
+
+	#
+	# ALTER TABLE $table ALTER $col
+	#
+	my $w = $self->next_word();
+	if ($w eq 'SET') {
+		my $w2 = $self->next_word();
+		if ($w2 eq 'NOT') {
+			my $val = $self->get_remain();
+			if ($val !~ /^NULL$/i) {
+				return $self->error('SQL error: %s', $val);
+			}
+			my $r = $DB->set_not_null($table, $col);
+			$self->log('SET NOT NULL ' . ($r ? 'fail' : 'success'));
+
+		} elsif ($w2 eq 'DEFAULT') {
+			if (!$self->get_words_len()) {
+				return $self->error('Need default value');
+			}
+			my $val = $self->get_remain();
+			my ($r, $v) = $self->check_insert_value($val);
+			if (!defined $r) {
+				return $self->error('SQL error: %s', $val);
+			}
+			my $r = $DB->set_default($table, $col, $r ? undef : $v, $r ? $v : undef);
+			$self->log('SET DEFAULT ' . ($r ? 'fail' : 'success'));
+
+		} else {
+			$self->error('SQL error: %s', $w2);
+		}
+
+	} elsif ($w eq 'DROP') {
+		my $w2 = $self->next_word();
+		if ($w2 eq 'NOT') {
+			my $val = $self->get_remain();
+			if ($val !~ /^NULL$/i) {
+				return $self->error('SQL error: %s', $val);
+			}
+			my $r = $DB->drop_not_null($table, $col);
+			$self->log('DROP NOT NULL ' . ($r ? 'fail' : 'success'));
+
+		} elsif ($w2 eq 'DEFAULT') {
+			if (!$self->remain_is_null()) { return; }
+
+			my $r = $DB->drop_default($table, $col);
+			$self->log('DROP DEFAULT ' . ($r ? 'fail' : 'success'));
+
+		} else {
+			$self->error('SQL error: %s', $w2);
+		}
+
+	} else {
+		$self->error('SQL error: %s', $w);
+	}
+}
+
 
 ################################################################################
 # original function
@@ -438,6 +603,7 @@ sub sql_emu_gen {
 
 	} else {
 		$self->error('SQL error: %s', $w);
+		$self->log('example: GEN PKEY table');
 	}
 }
 
@@ -711,8 +877,17 @@ my %KEYWORDS = map { $_ => 1} qw(
 	TABLE
 	INDEX
 	INTO
+	ADD
 	SET
+	REFERENCES
+	REF
 );
+
+sub get_words_len {
+	my $self = shift;
+	my $words= $self->{words};
+	return $#$words+1;
+}
 
 sub next_word {
 	my $self = shift;
@@ -726,6 +901,15 @@ sub next_word_is {
 	my $word = $self->next_word();
 	if ($word ne $check) {
 		return $self->error('SQL error: %s', $word);
+	}
+	return $word;
+}
+
+sub next_word_is_colmun {
+	my $self = shift;
+	my $word = $self->next_word() =~ tr/A-Z/a-z/r;
+	if ($word !~ /^\w+$/) {
+		return $self->error('colmun name error: %s', $word);
 	}
 	return $word;
 }
@@ -769,6 +953,15 @@ sub get_remain {
 	my $self = shift;
 	my $words= $self->{words};
 	return join(' ', @$words);
+}
+
+sub remain_is_null {
+	my $self = shift;
+	my $words= $self->{words};
+	if (@$words) {
+		return $self->error('SQL error: %s', $words->[0]);
+	}
+	return 1;
 }
 
 #-------------------------------------------------------------------------------

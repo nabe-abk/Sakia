@@ -143,7 +143,7 @@ sub add_column {
 	if (!$col) { return 10; }	# error
 
 	# ALTER TABLE
-	my $sth = $self->do_sql("ALTER TABLE $table ADD COLUMN $sql");
+	my $sth = $self->do_sql("ALTER TABLE $table ADD COLUMN $sql", @vals);
 	if (!$sth) {
 		return 1;
 	}
@@ -162,26 +162,99 @@ sub add_column {
 # drop column
 #-------------------------------------------------------------------------------
 sub drop_column {
-	my ($self, $table, $column) = @_;
-	$table  =~ s/\W//g;
-	$column =~ s/\W//g;
-	if ($table eq '' || $column eq '') { return 9; }
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
 
-	my $sth = $self->do_sql("ALTER TABLE $table DROP COLUMN $column");
+	my $sth = $self->do_sql("ALTER TABLE $table DROP COLUMN $col");
 
 	return $sth ? 0 : 1;
 }
 
 #-------------------------------------------------------------------------------
-# add index
+# create index
 #-------------------------------------------------------------------------------
-sub add_index {
-	my ($self, $table, $column) = @_;
-	$table  =~ s/\W//g;
-	$column =~ s/\W//g;
-	if ($table eq '' || $column eq '') { return 9; }
+sub create_index {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
 
-	my $sth = $self->do_sql("CREATE INDEX ${table}_${column}_idx ON $table($column)");
+	my $sth = $self->do_sql("CREATE INDEX ${table}_${col}_idx ON $table($col)");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# drop index
+#-------------------------------------------------------------------------------
+sub drop_index {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("DROP INDEX ${table}_${col}_idx");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# set not null
+#-------------------------------------------------------------------------------
+sub set_not_null {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("ALTER TABLE $table ALTER $col SET NOT NULL");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# drop not null
+#-------------------------------------------------------------------------------
+sub drop_not_null {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("ALTER TABLE $table ALTER $col DROP NOT NULL");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# set default
+#-------------------------------------------------------------------------------
+sub set_default {
+	my ($self, $table, $col, $val, $sqlv) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sv  = $sqlv ne '';
+	my @ary = $sv ? ()    : ($val eq '' ? undef : $val);
+	$val    = $sv ? $sqlv : '?';
+	my $sth = $self->do_sql("ALTER TABLE $table ALTER $col SET DEFAULT $val", @ary);
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# drop default
+#-------------------------------------------------------------------------------
+sub drop_default {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("ALTER TABLE $table ALTER $col DROP DEFAULT");
 
 	return $sth ? 0 : 1;
 }

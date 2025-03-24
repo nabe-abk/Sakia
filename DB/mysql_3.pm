@@ -125,26 +125,6 @@ sub parse_column {
 	return ($col, $sql, $is_text, @vals);
 }
 
-sub do_create_index {
-	my $self  = shift;
-	my $table = shift;
-	my $col   = shift;
-	my $istext= shift;
-	#
-	# The length postfix required for MySQL's text column.
-	# This is not required on MariaDB.
-	#
-	my $len = $istext && !$self->is_mariadb() ? "(". int($self->{text_index_size}) .")" : '';
-
-	return $self->do_sql("CREATE INDEX ${table}_${col}_idx ON $table($col$len)");
-}
-
-sub is_mariadb {
-	my $self  = shift;
-	if (exists $self->{is_mariadb}) { return $self->{is_mariadb}; }
-	return ($self->{is_mariadb} = $self->db_version() =~ /\bMariaDB\b/i);
-}
-
 #-------------------------------------------------------------------------------
 # drop table
 #-------------------------------------------------------------------------------
@@ -181,7 +161,7 @@ sub add_column {
 	if (!$col) { return; }	# error
 
 	# ALTER TABLE
-	my $sth = $self->do_sql("ALTER TABLE $table ADD COLUMN $sql");
+	my $sth = $self->do_sql("ALTER TABLE $table ADD COLUMN $sql", @vals);
 	if (!$sth) {
 		return 1;
 	}
@@ -200,26 +180,135 @@ sub add_column {
 # drop column
 #-------------------------------------------------------------------------------
 sub drop_column {
-	my ($self, $table, $column) = @_;
-	$table  =~ s/\W//g;
-	$column =~ s/\W//g;
-	if ($table eq '' || $column eq '') { return 9; }
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
 
-	my $sth = $self->do_sql("ALTER TABLE $table DROP COLUMN $column");
+	my $sth = $self->do_sql("ALTER TABLE $table DROP COLUMN $col");
 
 	return $sth ? 0 : 1;
 }
 
 #-------------------------------------------------------------------------------
-# add index
+# create index
 #-------------------------------------------------------------------------------
-sub add_index {
+sub create_index {
 	my ($self, $table, $col) = @_;
 	$table =~ s/\W//g;
 	$col   =~ s/\W//g;
-	if ($table eq '' || $col eq '') { return 9; }
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
 
 	my $sth = $self->do_create_index($table, $col);
+
+	return $sth ? 0 : 1;
+}
+
+sub do_create_index {
+	my $self  = shift;
+	my $table = shift;
+	my $col   = shift;
+	my $istext= shift;
+	#
+	# The length postfix required for MySQL's text column.
+	# This is not required on MariaDB.
+	#
+	my $len = $istext && !$self->is_mariadb() ? "(". int($self->{text_index_size}) .")" : '';
+
+	return $self->do_sql("CREATE INDEX ${table}_${col}_idx ON $table($col$len)");
+}
+
+sub is_mariadb {
+	my $self  = shift;
+	if (exists $self->{is_mariadb}) { return $self->{is_mariadb}; }
+	return ($self->{is_mariadb} = $self->db_version() =~ /\bMariaDB\b/i);
+}
+
+#-------------------------------------------------------------------------------
+# drop index
+#-------------------------------------------------------------------------------
+sub drop_index {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("DROP INDEX ${table}_${col}_idx ON $table");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# set not null
+#-------------------------------------------------------------------------------
+sub set_not_null {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("SHOW COLUMNS FROM $table WHERE field=?", $col);
+	if (!$sth || $sth->rows!=1) { return 2; }
+
+	my $h    = $sth->fetchrow_hashref();
+	my $de   = $h->{Default};
+	my $info = "$h->{Type} $h->{Extra} NOT NULL"
+		 . ($de ne '' ? " DEFAULT $de" : '');
+
+	my $sth = $self->do_sql("ALTER TABLE $table MODIFY $col $info");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# drop not null
+#-------------------------------------------------------------------------------
+sub drop_not_null {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("SHOW COLUMNS FROM $table WHERE field=?", $col);
+	if (!$sth || $sth->rows!=1) { return 2; }
+
+	my $h    = $sth->fetchrow_hashref();
+	my $de   = $h->{Default};
+	my $info = "$h->{Type} $h->{Extra}"
+		 . ($de ne '' ? " DEFAULT $de" : '');
+
+	my $sth = $self->do_sql("ALTER TABLE $table MODIFY $col $info");
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# set default
+#-------------------------------------------------------------------------------
+sub set_default {
+	my ($self, $table, $col, $val, $sqlv) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sv  = $sqlv ne '';
+	my @ary = $sv ? ()    : ($val eq '' ? undef : $val);
+	$val    = $sv ? $sqlv : '?';
+	my $sth = $self->do_sql("ALTER TABLE $table ALTER $col SET DEFAULT $val", @ary);
+
+	return $sth ? 0 : 1;
+}
+
+#-------------------------------------------------------------------------------
+# drop default
+#-------------------------------------------------------------------------------
+sub drop_default {
+	my ($self, $table, $col) = @_;
+	$table =~ s/\W//g;
+	$col   =~ s/\W//g;
+	if ($table eq '' || $col eq '' || $col =~ /^pkey$/i) { return 9; }
+
+	my $sth = $self->do_sql("ALTER TABLE $table ALTER $col DROP DEFAULT");
 
 	return $sth ? 0 : 1;
 }

@@ -280,6 +280,7 @@ sub do_sql {
 	if (!$sth || $dbh->err) {
 		$self->error($sql);
 		$self->error($dbh->errstr);
+		return;
 	}
 	return $sth;
 }

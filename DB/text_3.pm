@@ -23,26 +23,29 @@ sub create_table {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
 	my $_cols= shift;
-	my $ROBJ = $self->{ROBJ};
 
 	$table =~ s/\W//g;
-	if ($table eq '') { $self->error('Called create_table() with null table name'); return 9; }
+	if ($table eq '') {
+		$self->error('Called create_table() with null table name');
+		return 9;
+	}
 
 	#--------------------------------------------------
 	# check table name
 	#--------------------------------------------------
 	my $dir = $self->{dir} . $table . '/';
-	if (!-e $dir) {
-		if (!$ROBJ->mkdir($dir)) { $self->error("mkdir '$dir' error : $!"); }
+	if (!-e $dir && !mkdir($dir)) {
+		$self->error("mkdir '$dir' error : $!");
+		return 30;
 	}
 	if (-e "$dir$self->{index_backup}") {
 		$self->error("'%s' table already exists", $table);
-		return 30;
+		return 31;
 	}
 	if ($table =~ /^\d/) {
 		$self->error("To be a 'a-z' or '_' at the first character of a table name : '%s'", $table);
 		rmdir($dir);
-		return 30;
+		return 32;
 	}
 
 	#--------------------------------------------------
@@ -98,14 +101,15 @@ sub parse_column {
 	my $h    = shift;
 	my $is_create = shift;
 
+	my %save;
+
 	my $col = $h->{name} =~ tr/A-Z/a-z/r;
-	$col =~ s/\W//g;
-	if ($col eq '') {
+	if ($col eq '' || $col =~ /\W/) {
 		$self->error('Illegal column name: %s', $col);
 		return 7;
 	}
 
-	# check column name
+	# check column
 	my $cols = $self->{"$table.cols"};
 	if ($cols->{$col}) {
 		$self->error("Column '%s' is already exists in table '%s'", $col, $table);
@@ -119,40 +123,22 @@ sub parse_column {
 		$self->error('Column "%s" have invalid type "%s"', $col, $h->{type});
 		return 10;
 	}
-	$self->{"$table.cols"}->{$col}=$info;
+	$save{cols} = $info;
 
-	if ($h->{unique})   { $self->{"$table.unique"} ->{$col}=1; }	# UNIQUE
-	if ($h->{not_null}) { $self->{"$table.notnull"}->{$col}=1; }	# NOT NULL
+	if ($h->{unique})   { $save{unique}  = 1; }
+	if ($h->{not_null}) { $save{notnull} = 1; }
 	if ($h->{index} || $h->{index_tbl} || $h->{unique}) {
-		$self->{"$table.index"}->{$col}=1;	# unique require index!
+		$save{index} = 1;	# unique require index!
 	}
 
 	#
 	# default value
 	#
-	if ($h->{default_sql} =~ /^NULL$/i) {
-		$self->{"$table.default"}->{$col} = '';
-
-	} elsif ($h->{default_sql} ne '') {
-		my $org = $h->{default_sql};
-		my $v   = $self->load_sql_context($table, $col, $org);
-		if (!defined $v) {
-			return 21;
-		}
-		if ($v ne '' && &{$info->{check}}($v) eq '') {
-			$self->error('Column "%s %s" have invalid default value: %s', $col, $h->{type}, $org);
-			return 22;
-		}
-		$self->{"$table.default"}->{$col} = $org =~ tr/a-z/A-Z/r;
-
-	} elsif ($h->{default} ne '') {
-		my $v = $h->{default};
-		if ($v ne '' && &{$info->{check}}($v) eq '') {
-			$self->error('Column "%s %s" have invalid default value: %s', $col, $h->{type}, $h->{default});
-			return 22;
-		}
-		$self->{"$table.default"}->{$col} = '#' . $v;
+	my $v = $self->check_default_value($table, $col, $info, $h->{default}, $h->{default_sql});
+	if (!defined $v) {
+		return;
 	}
+	$save{default} = $v;
 
 	#
 	# Referential constraints
@@ -180,10 +166,15 @@ sub parse_column {
 				return 34;
 			}
 		}
-		$self->{"$table.ref"}->{$col} = $t eq $table ? $c : $ref;
+		$save{ref} = $t eq $table ? $c : $ref;
 	}
 
-	return 0;
+	# save to internal memory
+	foreach(keys(%save)) {
+		$self->{"$table.$_"}->{$col} = $save{$_};
+	}
+
+	return wantarray ? (0, $col) : 0;
 }
 
 #-------------------------------------------------------------------------------
@@ -210,43 +201,6 @@ sub drop_table {
 	return $flag;		# 0 is success
 }
 
-#-------------------------------------------------------------------------------
-# rebuild index file
-#-------------------------------------------------------------------------------
-sub rebuild_index {
-	my ($self, $table) = @_;
-	my $ROBJ = $self->{ROBJ};
-	$table =~ s/\W//g;
-
-	my $dir = $self->{dir} . $table . '/';
-	my $index_backup = $dir . $self->{index_backup};
-	if (!-r $index_backup) { return 1; }
-
-	# load backup file
-	my $index_file_orig = $self->{index_file};
-	$self->{index_file} = $self->{index_backup};
-	my $db = $self->load_index($table);
-	$self->{index_file} = $index_file_orig;
-
-	# load column data files
-	my $files = $ROBJ->search_files($dir);
-	my $ext   = $self->{ext};
-	my @files = grep(/^\d+$ext$/, @$files);
-	my @db;
-	my $serial = 0;
-	foreach(@files) {
-		my $h = $ROBJ->fread_hash($dir . $_);
-		push(@db, $h);
-		if ($serial < $h->{pkey}) { $serial = $h->{pkey}; } 
-	}
-
-	$self->clear_cache($table);
-
-	$self->{"$table.serial"} = $serial;
-	$self->{"$table.tbl"}    = \@db;
-	$IndexCache{$table}      = \@db;
-	$self->save_index($table, 'force flag');
-}
 
 ################################################################################
 # support functions
@@ -266,7 +220,6 @@ sub add_column {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
 	my $h    = shift;
-	my $ROBJ = $self->{ROBJ};
 
 	# load index
 	$table =~ s/\W//g;
@@ -277,8 +230,38 @@ sub add_column {
 		return 7;
 	}
 
-	my $r = $self->parse_column($table, $h);
+	# check not null, unique
+	my $rows      = $#$db+1;
+	my $exists_de = $h->{default} ne '' || $h->{default_sql} !~ /^(?:|null)$/i;
+
+	if ($h->{not_null} && 0<$rows && !$exists_de) {
+		$self->edit_index_exit($table);
+		$self->error("Column can not be added due to NOT NULL constraint. rows=%d", $rows);
+		return 8;
+	}
+
+	if ($h->{unique} && 1<$rows && $exists_de) {
+		$self->edit_index_exit($table);
+		$self->error("Column can not be added due to UNQIUE constraint. rows=%d", $rows);
+		return 9;
+	}
+
+	# save
+	my ($r, $col) = $self->parse_column($table, $h);
 	if ($r) { return $r; }
+
+	if ($rows) {
+		my $de  = $self->{"$table.default"}->{$col};
+		my $val = $de eq '' ? '' : (ord($de)==0x23 ? substr($de,1) : $self->load_sql_context($table, $col, $de));
+
+		# add column from all row data
+		$self->load_allrow($table);
+		my $all = $self->{"$table.tbl"};
+		foreach(@$all) {
+			$_->{$col} = $val;
+			$self->write_rowfile($table, $_);
+		}
+	}
 
 	$self->save_index($table);
 	$self->save_backup_index($table);
@@ -294,10 +277,9 @@ sub drop_column {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
 	my $col  = shift =~ tr/A-Z/a-z/r;
-	my $ROBJ = $self->{ROBJ};
 	$table  =~ s/\W//g;
 	$col    =~ s/\W//g;
-	if ($table eq '' || $col eq '') { return 7; }
+	if ($table eq '' || $col eq '' || $col eq 'pkey') { return 7; }
 
 	# load index
 	$table =~ s/\W//g;
@@ -311,7 +293,7 @@ sub drop_column {
 	# column exists?
 	if (! $self->{"$table.cols"}->{$col}) {
 		$self->edit_index_exit($table);
-		$self->error("Can't find '%s' column in relation '%s'", $col, $table);
+		$self->error("Can't find '%s' column in table '%s'", $col, $table);
 		return 9;
 	}
 
@@ -327,8 +309,6 @@ sub drop_column {
 	$self->load_allrow($table);
 	my $all = $self->{"$table.tbl"};
 	foreach(@$all) {
-		if ($_->{$col} eq '') { next; }
-
 		delete $_->{$col};
 		$self->write_rowfile($table, $_);
 	}
@@ -341,13 +321,13 @@ sub drop_column {
 }
 
 #-------------------------------------------------------------------------------
-# add index
+# create index
 #-------------------------------------------------------------------------------
-sub add_index {
+sub create_index {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
 	my $col  = shift =~ tr/A-Z/a-z/r;
-	my $ROBJ = $self->{ROBJ};
+	if ($col eq 'pkey') { return 7; }
 
 	# load index
 	$table =~ s/\W//g;
@@ -358,20 +338,278 @@ sub add_index {
 		return 9;
 	}
 
-	# update table info
+	# check
 	my $cols = $self->{"$table.cols"};
 	my $idx  = $self->{"$table.index"};
-	if (! grep { $_ eq $col } @$cols) {	# not exists
+	if (!$cols->{$col}) {
 		$self->edit_index_exit($table);
 		$self->error($ErrNotFoundCol, $table, $col);
-		return 8;
+		return 11;
 	}
-	if (! grep { $_ eq $col } @$idx) {	# add to index
-		push(@$idx, $col);
-		my $dir = $self->{dir} . $table . '/';
-		my $ext = $self->{ext};
-		$self->load_allrow($table);
+	if ($idx->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error('In "%s" table, already exists index of "%s".', $table, $col);
+		return 12;
 	}
+
+	# update table info
+	$idx->{$col}=1;
+
+	$self->load_allrow($table);
+	$self->save_index($table);
+	$self->save_backup_index($table);
+
+	return 0;
+}
+
+#-------------------------------------------------------------------------------
+# drop index
+#-------------------------------------------------------------------------------
+sub drop_index {
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
+	if ($col eq 'pkey') { return 7; }
+
+	# load index
+	$table =~ s/\W//g;
+	my $db = $self->load_index_for_edit($table);
+	if (!defined $db) {
+		$self->edit_index_exit($table);
+		$self->error("Can't find '%s' table", $table);
+		return 9;
+	}
+
+	# check
+	my $cols = $self->{"$table.cols"};
+	my $idx  = $self->{"$table.index"};
+	my $uniq = $self->{"$table.unique"};
+	if (!$cols->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error($ErrNotFoundCol, $table, $col);
+		return 11;
+	}
+	if (!$idx->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error('In "%s" table, not found index of "%s".', $table, $col);
+		return 12;
+	}
+	if ($uniq->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error('In "%s" table, due to the unique constraint, the "%s" column needs an index.', $table, $col);
+		return 13;
+	}
+
+	# update table info
+	delete $idx->{$col};
+
+	$self->save_index($table);
+	$self->save_backup_index($table);
+
+	return 0;
+}
+
+#-------------------------------------------------------------------------------
+# set not null
+#-------------------------------------------------------------------------------
+sub set_not_null {
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
+	if ($col eq 'pkey') { return 7; }
+
+	# load index
+	$table =~ s/\W//g;
+	my $db = $self->load_index_for_edit($table);
+	if (!defined $db) {
+		$self->edit_index_exit($table);
+		$self->error("Can't find '%s' table", $table);
+		return 9;
+	}
+
+	# check
+	my $cols = $self->{"$table.cols"};
+	my $notn = $self->{"$table.notnull"};
+	if (!$cols->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error($ErrNotFoundCol, $table, $col);
+		return 11;
+	}
+	if ($notn->{$col}) {
+		$self->edit_index_exit($table);
+		return 0;				# Success
+	}
+
+	my $list = $self->load_allrow($table);
+	foreach(@$list) {
+		if ($_->{$col} ne '') { next; }
+
+		$self->error('In "%s" table, NULL data exists "%s" column', $table, $col);
+		return 12;
+	}
+
+	# update table info
+	$notn->{$col}=1;
+
+	$self->save_index($table);
+	$self->save_backup_index($table);
+
+	return 0;
+}
+
+#-------------------------------------------------------------------------------
+# drop not null
+#-------------------------------------------------------------------------------
+sub drop_not_null {
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
+	if ($col eq 'pkey') { return 7; }
+
+	# load index
+	$table =~ s/\W//g;
+	my $db = $self->load_index_for_edit($table);
+	if (!defined $db) {
+		$self->edit_index_exit($table);
+		$self->error("Can't find '%s' table", $table);
+		return 9;
+	}
+
+	# check
+	my $cols = $self->{"$table.cols"};
+	my $notn = $self->{"$table.notnull"};
+	if (!$cols->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error($ErrNotFoundCol, $table, $col);
+		return 11;
+	}
+	if (!$notn->{$col}) {
+		$self->edit_index_exit($table);
+		return 0;				# Success
+	}
+
+	# update table info
+	delete $notn->{$col};
+
+	$self->save_index($table);
+	$self->save_backup_index($table);
+
+	return 0;
+}
+
+#-------------------------------------------------------------------------------
+# set default
+#-------------------------------------------------------------------------------
+sub set_default {
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
+	my $val  = shift;
+	my $sqlv = shift;		# SQL value
+	if ($col eq 'pkey') { return 7; }
+
+	# load index
+	$table =~ s/\W//g;
+	my $db = $self->load_index_for_edit($table);
+	if (!defined $db) {
+		$self->edit_index_exit($table);
+		$self->error("Can't find '%s' table", $table);
+		return 9;
+	}
+
+	# check
+	my $cols = $self->{"$table.cols"};
+	my $de   = $self->{"$table.default"};
+	my $info = $cols->{$col};
+	if (!$info) {
+		$self->edit_index_exit($table);
+		$self->error($ErrNotFoundCol, $table, $col);
+		return 11;
+	}
+
+	my $v = $self->check_default_value($table, $col, $info, $val, $sqlv);
+	if (!defined $v) {
+		$self->edit_index_exit($table);
+		return 12;
+	}
+
+	# update table info
+	$de->{$col}=$v;
+
+	$self->save_index($table);
+	$self->save_backup_index($table);
+
+	return 0;
+}
+
+sub check_default_value {
+	my $self = shift;
+	my $table= shift;
+	my $col  = shift;
+	my $info = shift;
+	my $val  = shift;
+	my $sqlv = shift;	# SQL value
+
+	if ($sqlv =~ /^NULL$/i) {
+		return '';
+	}
+
+	if ($sqlv ne '') {
+		my $v = $self->load_sql_context($table, $col, $sqlv);
+		if (!defined $v) {
+			return;
+		}
+		if ($v ne '' && &{$info->{check}}($v) eq '') {
+			$self->error('Column "%s %s" have invalid default value: %s', $col, $info->{type}, $sqlv);
+			return;
+		}
+		return $sqlv =~ tr/a-z/A-Z/r;
+	}
+
+	if ($val ne '') {
+		my $v = $val;
+		if ($v ne '' && &{$info->{check}}($v) eq '') {
+			$self->error('Column "%s %s" have invalid default value: %s', $col, $info->{type}, $val);
+			return;
+		}
+		return '#' . $val;
+	}
+	return '';
+}
+
+#-------------------------------------------------------------------------------
+# drop default
+#-------------------------------------------------------------------------------
+sub drop_default {
+	my $self = shift;
+	my $table= shift =~ tr/A-Z/a-z/r;
+	my $col  = shift =~ tr/A-Z/a-z/r;
+	if ($col eq 'pkey') { return 7; }
+
+	# load index
+	$table =~ s/\W//g;
+	my $db = $self->load_index_for_edit($table);
+	if (!defined $db) {
+		$self->edit_index_exit($table);
+		$self->error("Can't find '%s' table", $table);
+		return 9;
+	}
+
+	# check
+	my $cols = $self->{"$table.cols"};
+	my $de   = $self->{"$table.default"};
+	if (!$cols->{$col}) {
+		$self->edit_index_exit($table);
+		$self->error($ErrNotFoundCol, $table, $col);
+		return 11;
+	}
+	if ($de->{$col} eq '') {
+		$self->edit_index_exit($table);
+		return 0;				# Success
+	}
+
+	# update table info
+	$de->{$col}=undef;
 
 	$self->save_index($table);
 	$self->save_backup_index($table);
@@ -413,13 +651,13 @@ sub get_colmuns_info {
 
 	my @cols;
 	foreach(keys(%$cols)) {
-		my $x = $default->{$_};
+		my $x = $_ eq 'pkey' ? '(serial)' : $default->{$_};
 		push(@cols, {
 			name	=> $_,
 			type	=> $cols->{$_}->{type},
 			unique	=> $unique->{$_}  ? 'YES' : 'NO',
 			notnull	=> $notnull->{$_} ? 'YES' : 'NO',
-			default	=> $x =~ /^#(.*)/ ? "'$1'" : $x,
+			default	=> $x =~ /^#(.*)/ ? ($1+0 eq $1 ? $1 : "'$1'") : $x,
 			ref	=> $ref->{$_},
 			index	=> $index->{$_}   ? 'YES' : 'NO'
 		});
@@ -435,7 +673,7 @@ sub sql_console {
 }
 
 ################################################################################
-# update backup index file
+# index file functions
 ################################################################################
 sub save_backup_index {
 	my $self  = shift;
@@ -445,6 +683,44 @@ sub save_backup_index {
 	local ($self->{"$table.tbl"}) = [];
 	$self->save_index($table, 1);
 	return 0;
+}
+
+#-------------------------------------------------------------------------------
+# rebuild index file
+#-------------------------------------------------------------------------------
+sub rebuild_index {
+	my ($self, $table) = @_;
+	my $ROBJ = $self->{ROBJ};
+	$table =~ s/\W//g;
+
+	my $dir = $self->{dir} . $table . '/';
+	my $index_backup = $dir . $self->{index_backup};
+	if (!-r $index_backup) { return 1; }
+
+	# load backup file
+	my $index_file_orig = $self->{index_file};
+	$self->{index_file} = $self->{index_backup};
+	my $db = $self->load_index($table);
+	$self->{index_file} = $index_file_orig;
+
+	# load column data files
+	my $files = $ROBJ->search_files($dir);
+	my $ext   = $self->{ext};
+	my @files = grep(/^\d+$ext$/, @$files);
+	my @db;
+	my $serial = 0;
+	foreach(@files) {
+		my $h = $ROBJ->fread_hash($dir . $_);
+		push(@db, $h);
+		if ($serial < $h->{pkey}) { $serial = $h->{pkey}; } 
+	}
+
+	$self->clear_cache($table);
+
+	$self->{"$table.serial"} = $serial;
+	$self->{"$table.tbl"}    = \@db;
+	$IndexCache{$table}      = \@db;
+	$self->save_index($table, 'force flag');
 }
 
 ################################################################################

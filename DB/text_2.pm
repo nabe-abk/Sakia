@@ -15,7 +15,6 @@ sub insert {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
 	my $h    = shift;
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my $db = $self->load_index_for_edit($table);
@@ -51,7 +50,7 @@ sub insert {
 		if ($v eq '' || !exists $unique_hash->{$_}->{$v}) { next; }
 		# Error
 		$self->edit_index_exit($table);
-		$self->error("On '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $_, $v);
+		$self->error("In '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $_, $v);
 		return 0;
 	}
 
@@ -151,7 +150,6 @@ sub update_match {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
 	my $h    = shift;
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my $r = $self->load_index_for_edit($table);
@@ -176,7 +174,6 @@ sub update_match {
 		$v =~ s/([A-Za-z_]\w*)/\$h->{$1}/g;
 		my $func;
 		eval "\$func=sub {my \$h=shift; return $v;}";
-		# $ROBJ->debug("$v");
 		if ($@) {
 			$self->error("expression error. table=$table, $@");
 			return 0;
@@ -184,7 +181,7 @@ sub update_match {
 		delete $h->{$_};
 		my $k=substr($_, 1);
 		if ($k eq 'pkey') {
-			$self->error("On '%s' table, disallow pkey update",$table);
+			$self->error("In '%s' table, disallow pkey update",$table);
 			return 0;
 		}
 		$funcs{$k} = $func;
@@ -238,7 +235,7 @@ sub update_match {
 			# found a duplicate
 			$self->edit_index_exit($table);
 			$self->clear_unique_cache($table);
-			$self->error("On '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $col, $_->{$col});
+			$self->error("In '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $col, $_->{$col});
 			return 0;
 		}
 		# renew UNIQUE hash
@@ -266,7 +263,6 @@ sub update_match {
 sub delete_match {
 	my $self = shift;
 	my $table= shift =~ tr/A-Z/a-z/r;
-	my $ROBJ = $self->{ROBJ};
 	$table =~ s/\W//g;
 
 	my $r = $self->load_index_for_edit($table);
@@ -688,7 +684,7 @@ sub check_column_data {
 		if (!$notnull->{$_}) { next; }
 		if ($is_insert && $_ eq 'pkey') { next; }
 		if ($new{$_} eq '') {
-			$self->error('On "%s" table, "%s" column is constrained not null.', $table, $_);
+			$self->error('In "%s" table, "%s" column is constrained not null.', $table, $_);
 			return;
 		}
 	}
@@ -702,7 +698,7 @@ sub load_sql_context {
 	my $v = $org =~ tr/a-z/A-Z/r;
 	if (($v+0) eq $v)		{ return $v; }
 	if ($v eq 'NULL')		{ return ''; }
-	if ($v eq 'CURRENT_TIMESTAMP')	{ return $ROBJ->print_tmf('%Y-%m-%d %H:%M:%S'); }
+	if ($v eq 'CURRENT_TIMESTAMP')	{ return $ROBJ->print_ts(); }
 
 	$self->error('SQL value "%s" is not support ("%s" table "%s" column).', $org, $table, $c);
 	return undef;
@@ -714,7 +710,6 @@ sub load_sql_context {
 sub load_and_generate_where {
 	my $self = shift;
 	my $table= shift;
-	my $ROBJ = $self->{ROBJ};
 
 	my $idx  = $self->{"$table.index"} || $self->load_index($table);
 	my $cols = $self->{"$table.cols"};

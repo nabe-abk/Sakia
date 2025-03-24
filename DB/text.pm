@@ -11,10 +11,10 @@ package Sakia::DB::text;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
 #-------------------------------------------------------------------------------
-our $VERSION = '1.60';
+our $VERSION = '1.70';
 our %IndexCache;
-our $ErrNotFoundCol = 'On "%s" table, not found "%s" column.';
-our $ErrInvalidVal  = 'On "%s" table, invalid value of "%s" column. "%s" is not %s.';
+our $ErrNotFoundCol = 'In "%s" table, not found "%s" column.';
+our $ErrInvalidVal  = 'In "%s" table, invalid value of "%s" column. "%s" is not %s.';
 ################################################################################
 # type define
 ################################################################################
@@ -64,7 +64,9 @@ sub new {
 		is_TDB	=> 1
 	}, $class);
 
-	if (!-e $dir) { $ROBJ->mkdir($dir); }
+	if (!-e $dir && !mkdir($dir)) {
+		die "Unable to create TextDB directory: $dir";
+	}
 
 	return $self;
 }
@@ -74,7 +76,6 @@ sub new {
 ################################################################################
 sub find_table {
 	my $self = shift;
-	my $ROBJ = $self->{ROBJ};
 	my $table = shift;
 	if ($table =~ /\W/) { return 0; }	# Not Found(error)
 
@@ -762,7 +763,7 @@ sub load_index {
 	if (! $edit && defined $self->{"$table.tbl"}) {
 		return $self->{"$table.tbl"};
 	}
-	$self->trace("load index on '$table' table".($edit ? ' (edit)':''));
+	$self->trace("load index on '$table' table" . ($edit ? ' (for edit)' : ''));
 
 	# prepare
 	my $dir   = $self->{dir} . $table . '/';
@@ -912,7 +913,6 @@ sub override_by_rowfile {		# keep original hash data
 sub load_allrow {
 	my $self  = shift;
 	my $table = shift;
-	my $ROBJ  = $self->{ROBJ};
 	if ($self->{"$table.load_all"}) { return $self->{"$table.tbl"}; }
 
 	$self->trace("load all data on '$table'");
