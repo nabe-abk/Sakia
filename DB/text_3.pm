@@ -444,7 +444,7 @@ sub set_not_null {
 	foreach(@$list) {
 		if ($_->{$col} ne '') { next; }
 
-		$self->error('In "%s" table, NULL data exists "%s" column', $table, $col);
+		$self->error('In "%s" table, null data exists "%s" column', $table, $col);
 		return 12;
 	}
 
