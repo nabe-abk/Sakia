@@ -5,6 +5,7 @@ use Fcntl;
 our %IndexCache;
 our $ErrNotFoundCol;
 our $ErrInvalidVal;
+our %SQL_CONTEXTS_lc;
 ################################################################################
 # insert, update, delete
 ################################################################################
@@ -60,8 +61,7 @@ sub insert {
 
 	# save
 	$self->write_rowfile($table, $h);
-	my $r = $self->save_index($table);
-	if ($r) { return 0; }	# fail
+	$self->save_index($table);
 
 	return $pkey;		# success
 }
@@ -161,19 +161,35 @@ sub update_match {
 
 	# Contains an expression in the update data
 	my %funcs;
+	my %upcol;
 	foreach (keys(%$h)) {
-		if (ord($_) != 0x2a) { next; }		# "*column"
-		my $v=$h->{$_};
-		if ($v =~ /^\w+$/) { next; }		# *column = "XXXX_YYYY_ZZZ" is special value
+		if (ord($_) != 0x2a) { $upcol{$_}=1; next; }	# check "*column"
+		my $v = $h->{$_};
 
 		$v =~ s![^\w\+\-\*\/\%\(\)\|\&\~<>]!!g;
 		if ($v =~ /\w\(/) {
 			$self->error("expression error(not allow function). table=$table, $v");
 			return 0;
 		}
-		$v =~ s/([A-Za-z_]\w*)/\$h->{$1}/g;
+
+		# context or colmun
+		my @cond;
+		$v =~ s!([A-Za-z_]\w*)!
+			my $x = $1 =~ tr/A-Z/a-z/r;
+			if ($SQL_CONTEXTS_lc{$x}) {
+				"\$self->load_sql_context('$x')";
+			} else {
+				push(@cond, "\$h->{$x} eq ''");
+				"\$h->{$x}";
+			}
+		!eg;
+
+		# compile function
+		my $isnull = @cond ? '(' . join('||', @cond) . ") && return; " : '';
+		my $functext = "sub {my \$h=shift;$isnull return $v;}";
+		if ($self->{TRACE}) { $self->trace('[eval] ' . $functext); }
 		my $func;
-		eval "\$func=sub {my \$h=shift; return $v;}";
+		eval "\$func=$functext";
 		if ($@) {
 			$self->error("expression error. table=$table, $@");
 			return 0;
@@ -181,10 +197,11 @@ sub update_match {
 		delete $h->{$_};
 		my $k=substr($_, 1);
 		if ($k eq 'pkey') {
-			$self->error("In '%s' table, disallow pkey update",$table);
+			$self->error("In '%s' table, disallow pkey update", $table);
 			return 0;
 		}
 		$funcs{$k} = $func;
+		$upcol{$k} = 1;
 	}
 
 	# check update data
@@ -203,16 +220,11 @@ sub update_match {
 	}
 
 	# rewrite matching lines
-	my @unique_cols = keys(%{ $self->{"$table.unique"} });
-	my $unique_hash = $self->load_unique_hash($table);
 	my $updates = 0;
 	my @new_db = @$db;
 	my @save_array;
 	foreach(@new_db) {
 		if (! &$func($_, $in)) { next; }	# not match
-
-		$updates++;
-		$self->delete_unique_hash($table, $_);
 
 		# rewrite internal memory data
 		my $row = $self->read_rowfile($table, $_);
@@ -223,36 +235,46 @@ sub update_match {
 		foreach my $k (keys(%funcs)) {
 			$row->{$k} = &{ $funcs{$k} }($row);
 		}
+
 		# save hash
 		push(@save_array, $row);
 		$_ = $row;
+		$updates++;
+	}
 
-		# check UNIQUE
-		foreach my $col (@unique_cols) {
-			my $v = $row->{$col};
-			if ($v eq '' || !exists $unique_hash->{$col}->{$v}) { next; }
-
-			# found a duplicate
-			$self->edit_index_exit($table);
-			$self->clear_unique_cache($table);
-			$self->error("In '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $col, $_->{$col});
-			return 0;
+	# No UPDATE
+	if (!$updates) {
+		if(! $self->{begin}) {
+			$self->edit_index_exit($table);		# free the lock
 		}
-		# renew UNIQUE hash
-		$self->add_unique_hash($table, $row);
+		return 0;
+	}
+
+	# check UNIQUE
+	my @ucols = grep { $upcol{$_} } keys(%{ $self->{"$table.unique"} });
+	if (@ucols) {
+		foreach my $c (@ucols) {
+			my %h;
+			foreach(@new_db) {
+				my $v = $_->{$c};
+				if ($v ne '' && $h{$v}) {
+					# found a duplicate
+					$self->edit_index_exit($table);
+					$self->error("In '%s' table, duplicate key value violates unique constraint '%s'(value is '%s')", $table, $c, $v);
+					return 0;
+				}
+				$h{$v}=1;
+			}
+		}
 	}
 
 	# save
-	if ($updates) {
-		$self->{"$table.tbl"}=\@new_db;
-		foreach(@save_array) {
-			$self->write_rowfile($table, $_);
-		}
-		my $r = $self->save_index($table);	# save index
-		if ($r) { return 0; }			# fail
-	} elsif(! $self->{begin}) {
-		$self->edit_index_exit($table);		# free the lock
+	$self->{"$table.tbl"}=\@new_db;
+	foreach(@save_array) {
+		$self->write_rowfile($table, $_);
 	}
+	$self->clear_unique_cache($table);
+	$self->save_index($table);
 
 	return $updates;
 }
@@ -454,17 +476,17 @@ sub load_unique_hash {
 	my @unique_cols = keys(%{ $self->{"$table.unique"} });
 	my ($line0, $line1, $line2);
 	foreach(0..$#unique_cols) {
-		my $col = $unique_cols[$_];
-		$col =~ s/\W//g;
-		$line0 .= "my \%h$_;";
+		my $col = $unique_cols[$_] =~ s/\W//gr;
+		$line0 .= "\%h$_,";
 		$line1 .= "\$h${_}{\$_->{'$col'}}=1;";
 		$line2 .= "'$col'=>\\\%h$_,";
 	}
+	chop($line0);
 	chop($line2);
 	my $conv_hash_func = <<FUNC;
 	sub {
 		my \$db = shift;
-		$line0
+		my ($line0);
 		foreach(\@\$db) {
 			$line1
 		}
@@ -645,7 +667,7 @@ sub check_column_data {
 
 		my $v = $h->{$_};
 		if (ord($_) == 0x2a) {		# $h->{'*col'} = 'SQL value'
-			$v = $self->load_sql_context($table, $c, $v);
+			$v = $self->check_sql_context($table, $c, $v);
 			if (!defined $v) { $err=1; next; }
 		}
 		if ($v ne '' && !&{$info->{check}}($v))  {
@@ -667,7 +689,7 @@ sub check_column_data {
 			if (exists $new{$_} || $v eq '') { next; }
 
 			# 0x23 = '#'
-			$new{$_} = ord($v)==0x23 ? substr($v,1) : $self->load_sql_context($table, $_, $v);
+			$new{$_} = ord($v)==0x23 ? substr($v,1) : $self->check_sql_context($table, $_, $v);
 		}
 		foreach(keys(%$cols)) {
 			if ($_ eq 'pkey' || exists($new{$_})) { next; }
@@ -690,18 +712,29 @@ sub check_column_data {
 	}
 	return \%new;
 }
+#-------------------------------------------------------------------------------
+# SQL contexts
+#-------------------------------------------------------------------------------
+%SQL_CONTEXTS_lc = (
+	null => 1,
+	current_timestamp => 1
+);
 
+sub check_sql_context {
+	my ($self, $table, $col, $val) = @_;
+	if (($val+0) eq $val) { return $val; }
+	my $v = $self->load_sql_context($val);
+	if (defined $v) { return $v; }
+
+	$self->error('SQL value "%s" is not support ("%s" table "%s" column).', $val, $table, $col);
+	return;
+}
 sub load_sql_context {
-	my ($self, $table, $c, $org) = @_;
-	my $ROBJ = $self->{ROBJ};
-
-	my $v = $org =~ tr/a-z/A-Z/r;
-	if (($v+0) eq $v)		{ return $v; }
+	my $self = shift;
+	my $v    = shift =~ tr/a-z/A-Z/r;
 	if ($v eq 'NULL')		{ return ''; }
-	if ($v eq 'CURRENT_TIMESTAMP')	{ return $ROBJ->print_ts(); }
-
-	$self->error('SQL value "%s" is not support ("%s" table "%s" column).', $org, $table, $c);
-	return undef;
+	if ($v eq 'CURRENT_TIMESTAMP')	{ return $self->{ROBJ}->print_ts(); }
+	return;
 }
 
 ################################################################################

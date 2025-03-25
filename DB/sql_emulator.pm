@@ -776,6 +776,9 @@ sub parse_where {
 			if (!$self->check_and_restore_value($v)) { return; }
 
 			my $k = $OP_to_KEY{$op};
+			if ($h->{$k}->{$col}) {
+				return $self->error('Duplicate "%s%s" conditions.', $col, $op);
+			}
 			$h->{$k}->{$col} = $v;
 			next;
 		}
