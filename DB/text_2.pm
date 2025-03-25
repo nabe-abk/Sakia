@@ -219,6 +219,11 @@ sub update_match {
 		return 0;	# error exit
 	}
 
+	# checker
+	my $cols  = $self->{"$table.cols"};
+	my %check = map { $_ => $cols->{$_}->{check} } keys(%$cols);
+	my $nnull = $self->{"$table.notnull"};
+
 	# rewrite matching lines
 	my $updates = 0;
 	my @new_db = @$db;
@@ -228,12 +233,22 @@ sub update_match {
 
 		# rewrite internal memory data
 		my $row = $self->read_rowfile($table, $_);
-		foreach my $k (keys(%$h)) {
+		foreach my $c (keys(%$h)) {
 			# replace
-			$row->{$k} = $h->{$k};
+			$row->{$c} = $h->{$c};
 		}
-		foreach my $k (keys(%funcs)) {
-			$row->{$k} = &{ $funcs{$k} }($row);
+		foreach my $c (keys(%funcs)) {
+			my $v = $row->{$c} = &{ $funcs{$c} }($row);
+			if ($v eq '' && $nnull->{$c}) {
+				$self->edit_index_exit($table);
+				$self->error('In "%s" table, "%s" column is constrained not null.', $table, $c);
+				return 0;
+			}
+			if ($v ne '' && !&{$check{$c}}($v)) {
+				$self->edit_index_exit($table);
+				$self->error($ErrInvalidVal, $table, $c, $row->{$c}, $cols->{$c}->{type});
+				return 0;
+			}
 		}
 
 		# save hash
