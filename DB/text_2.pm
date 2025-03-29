@@ -808,7 +808,7 @@ sub load_and_generate_where {
 			push(@cond, $not ? "\$h->{$col}ne'$val'" : "\$h->{$col}eq'$val'");
 			next;
 		}
-		# other (int/number/flag)
+		# other (int/number/boolean)
 		push(@cond, $not ? "\$h->{$col}!=$val" : "\$h->{$col}==$val");
 	}
 	if ($err) { return; }

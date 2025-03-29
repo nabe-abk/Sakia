@@ -91,146 +91,157 @@ sub find_table {
 sub select {
 	my $self = shift;
 	my $_tbl = shift;
-	my $h    = shift;
+	my $arg  = shift;
 	my $ROBJ = $self->{ROBJ};
 
-	my %names;	# table names
+	my @tables;	# table names
+	my %names;	# table name  to real name
 
 	#-----------------------------------------------------------------------
-	# load table infomation
+	# load tables infomation
 	#-----------------------------------------------------------------------
 	my ($table, $tname) = $self->parse_table_name($_tbl);
 	$names{$tname} = $table;
+	push(@tables, $tname);
 
-	my $db = $self->load_index($table);	# table array ref
+	my $db = $self->load_index($table);
 	if ($#$db < 0) { return []; }
 	my $db_orig = $db;
 
-	my $dir = $self->{dir} . $table . '/';
-	my $ext = $self->{ext};
-	my $index_cols = $self->{"$table.index"};
-	my $all_cols   = $self->{"$table.cols"};
-	my $load_cols  = $self->{"$table.load_all"} ? $all_cols : $index_cols;
-
-	#-----------------------------------------------------------------------
-	# check select columns
-	#-----------------------------------------------------------------------
-	my $sel_cols = $h->{cols};
-	if ($sel_cols) {
-		$sel_cols = ref($sel_cols) ? $sel_cols : [ $sel_cols ];
-		if (my @ary = grep { !$all_cols->{$_} } @$sel_cols) {
-			foreach(@ary) {
-				$self->error($ErrNotFoundCol, $table, $_);
-			}
+	my $ljoins = [];
+	if ($arg->{ljoin}) {
+		$ljoins = ref($arg->{ljoin}) eq 'ARRAY' ? $arg->{ljoin} : [ $arg->{ljoin} ];
+	}
+	foreach(@$ljoins) {
+		my $jtable   = $_->{table};
+		my ($jt,$jn) = $self->parse_table_name($jtable);
+		if ($jt eq '' || $jn eq '' || !$self->find_table($jt)) {
+			$self->error('Table not found: %s', $jtable);
 			return [];
 		}
+		if (exists($names{$jn})) {
+			$self->error('Table name is duplicate: %s', $jn);
+			return [];
+		}
+		# pre load
+		$self->load_index($jt);
+		# save table names
+		$names{$jn}=$jt;
+		push(@tables, $jn);
 	}
 
 	#-----------------------------------------------------------------------
-	# load conditions data
+	# check columns
 	#-----------------------------------------------------------------------
-	my $flags    = $h->{flag} || $h->{boolean};
-	my @match    = sort( keys(%{ $h->{match}     }) );
-	my @not_match= sort( keys(%{ $h->{not_match} }) );
-	my @min      = sort( keys(%{ $h->{min}       }) );
-	my @max      = sort( keys(%{ $h->{max}       }) );
-	my @gt       = sort( keys(%{ $h->{gt}        }) );
-	my @lt       = sort( keys(%{ $h->{lt}        }) );
-	my @flag     = sort( keys(%{ $flags          }) );
-	my $is_null  = $h->{is_null}      || [];
-	my $not_null = $h->{not_null}     || [];
-	my $s_cols   = $h->{search_cols}  || [];
-	my $s_match  = $h->{search_match} || [];
-	my $s_equal  = $h->{search_equal} || [];
-
-	my @target_cols_L1 = (
-		@match, @not_match, @min, @max, @gt, @lt, @flag,
-		@$is_null, @$not_null
-	);
-	my @target_cols_L2 = (@$s_cols, @$s_match, @$s_equal);
-	my @target_cols    = (@target_cols_L1, @target_cols_L2);
-
-	#-----------------------------------------------------------------------
-	# check sort
-	#-----------------------------------------------------------------------
-	my ($sort_func, $sort) = $self->generate_sort_func($table, $h, $tname);
-	# removed "$tname.col" to "col" in @$sort
-	#
-	my $req_sort;		# require sort
-	my $sort_req_load_all;	# all data required for sort
-	#
-	if (@$sort) {
-		$req_sort = 1;
-		foreach(@$sort) {
-			if ($_ =~ /^(\w+)\.(\w+)$/) { next; }	# This column check by parse left join
-
-			if (!$load_cols->{$_}) { $sort_req_load_all=1; }
-			if (!$all_cols->{$_}) {
-				$self->error($ErrNotFoundCol, $table, $_);
-				return [];
-			}
+	my %selany;
+	my %colinfo;
+	foreach my $tn (@tables) {
+		my $t    = $names{$tn};
+		my $cols = $self->{"$t.cols"};
+		foreach(keys(%$cols)) {
+			my $h = $colinfo{"$tn.$_"} = {
+				%{$cols->{$_}},		# copy from original colinfo
+				table	=> $t,
+				tname	=> $tn,
+				cname	=> $_,
+				fullname=> "$tn.$_"
+			};
+			$selany{$_} = $colinfo{$_} = $colinfo{$_} ? { %$h, dup=>1 } : $h;
 		}
 	}
 
-	#-----------------------------------------------------------------------
-	# limit
-	#-----------------------------------------------------------------------
-	my $limit  = int($h->{limit});
-	my $offset = int($h->{offset});
-	if ($h->{limit} ne '' && !$limit) { return []; }	# limit is 0
-	if ($offset<0) {
-		$self->error('Offset must not be negative: %s', $h->{offset});
-		return [];
-	}
+	my %selinfo;	# select infomation by keys of the returned hash
+	my @selcols;	# select column names
+	#
+	# Ex) SELECt x y FROM tbl t
+	#	$selinfo{y} = 't.x';
+	#	@selcols    = ('t.x');
+	#
+	my $arg_cols = $arg->{cols} // '*';
+	if ($arg_cols) {
+		my %sel;
+		my $ary = ref($arg_cols) ? $arg_cols : [ $arg_cols ];
+		foreach(@$ary) {
+			if ($_ eq '*') {
+				foreach(keys(%selany)) {
+					my $fn = $colinfo{$_}->{fullname};
+					$sel{$fn}    = 1;
+					$selinfo{$_} = $fn;
+				}
+				next;
+			}
+			my $c = $_ =~ tr/A-Z/a-z/r;
+			my $n;
+			if ($c =~ /^(.*) +(\w+)$/) {		# col name
+				$c = $1;
+				$n = $2;
+				if ($n !~ /^[a-z_]/) {
+					$self->error('SELECT illegal colmun name: %s', $_);
+					return [];
+				}
+			}
+			$c =~ s/\s//g;
 
-	my $limit_of_search;
-	if (!wantarray && $limit) {		# wantarray is require hits
-		$limit_of_search = $limit + $offset;
+			my $func;
+			if ($c =~ /^(\w+)\(([^\)]*)\)$/i) {	# func(col)
+				$func = $1;
+				$c    = $2;
+			}
+			if ($c !~ /^(?:(\w+)\.)?(\w+|\*)$/) {
+				$self->error('SELECT colmuns error: %s', $_);
+				return [];
+			}
+			$n ||= $2;
+
+			if ($1 eq '') {
+				my $ci = $colinfo{$2};
+				if (!$ci) {
+					$self->error('SELECT colmun not found: %s', $_);
+					return [];
+				}
+				if ($ci->{dup}) {
+					$self->error('SELECT column name matches multiple table: %s', $_);
+					return [];
+				}
+				$c = $ci->{fullname};
+
+			} else {
+				my $t = $names{$1};
+				if (!$t) {
+					$self->error('SELECT colmuns error, table name not found: %s', $_);
+					return [];
+				}
+				if (!$colinfo{$c}) {
+					$self->error('SELECT colmun not found: %s', $_);
+					return [];
+				}
+			}
+			$sel{$c}     = 1;
+			$selinfo{$n} = $c;
+		}
+		@selcols = keys(%sel);
 	}
 
 	#-----------------------------------------------------------------------
 	# parse left join
 	#-----------------------------------------------------------------------
-	my %join_keymap;	# main table pkey to join table's line hash data
-	my %join_req_all;	# require all the data from the joined table for return value
-	my %join_colname;	# column name of return value to joined table's name and column
-	my @jcols_all;		# join colmuns for process. ex)tbl.id tbl.name ...etc
-	if ($h->{ljoin}) {
-		# copy all table data
-		my @ary;
-		foreach(@$db) {
-			my %h=%$_;
-			push(@ary, \%h);
-		}
-		$db = \@ary;
-
-		my $jary    = ref($h->{ljoin}) eq 'ARRAY' ? $h->{ljoin} : [ $h->{ljoin} ];
+	my %join_map;		# main table pkey to join table's line hash data
+	my @maps_arg;		# map table list
+	my $maps_arg_code='';	# map table access variables
+	if (@$ljoins) {
+		my $jary    = ref($arg->{ljoin}) eq 'ARRAY' ? $arg->{ljoin} : [ $arg->{ljoin} ];
 		my @lr_cols = map { $_->{left}, $_->{right} } @$jary;
 
-		foreach(@$jary) {
-			my $jtable = $_->{table};
-			my ($jt,$jn) = $self->parse_table_name($jtable);
-			if ($jt eq '' || $jn eq '' || !$self->find_table($jt)) {
-				$self->error('Table not found: %s', $jtable);
-				return [];
-			}
-			if (exists($names{$jn})) {
-				$self->error('Table name is duplicate: %s', $jn);
-				return [];
-			}
-			#---------------------------------------------
-			# join table infomation
-			#---------------------------------------------
-			$names{$jn}=$jt;
-			my $jdb = $self->load_index($jt);
-			my $idx = $self->{"$jt.index"};
-			my $all = $self->{"$jt.cols"};
+		foreach(@$ljoins) {
+			my ($jtable,$jn) = $self->parse_table_name($_->{table});
+			my $idx = $self->{"$jtable.index"};
+			my $all = $self->{"$jtable.cols"};
 
 			#---------------------------------------------
 			# check join condition
 			#---------------------------------------------
-			my $left  = $_->{left};
-			my $right = $_->{right};
+			my $left  = $_->{left}  =~ tr/A-Z/a-z/r;
+			my $right = $_->{right} =~ tr/A-Z/a-z/r;
 			if ($right =~ /^(\w+)/ && $1 ne $jn) {	# swap L/R if right is base table
 				my $x = $left;
 				$left = $right;
@@ -240,338 +251,329 @@ sub select {
 			my ($rn, $rc) = $right =~ /^(\w+)\.(\w+)$/ ? ($1,$2) : undef;
 
 			if ($ln eq '' || $rn eq '' || $ln eq $jn || $rn ne $jn) {
-				$self->error('Illegal join rule on "%s": left=%s, right=%s', $jtable, $left, $right);
+				$self->error('Illegal join rule on "%s": left=%s, right=%s', $_->{table}, $left, $right);
 				return [];
 			}
 			my $ltable = $names{$ln};
 			if (!$ltable || !$self->{"$ltable.cols"}->{$lc}) {
-				$self->error('"%s" column is not exists on join target "%s" table', $left, $jtable);
+				$self->error('"%s" column is not exists on join target "%s" table', $left, $ltable);
 				return [];
 			}
-			if (!$self->{"$jt.unique"}->{$rc}) {
-				$ROBJ->warning('"%s" column is not unique on join target "%s" table', $rc, $jtable);
+			if (!$self->{"$jtable.cols"}->{$rc}) {
+				$self->error('"%s" column is not exists on join target "%s" table', $right, $jtable);
+				return [];
 			}
 			# $rn=$tn
-
-			#---------------------------------------------
-			# check join columns
-			#---------------------------------------------
-			my %jcols;
-			my $req_all;
-			foreach(@target_cols, @lr_cols, @$sort) {
-				if ($_ !~ /^(\w+)\.(\w+)$/ || $1 ne $jn) { next; }
-
-				if (!$all->{$2}) {
-					$self->error('"%s" column is not exists on join target "%s" table', $_, $jtable);
-					return [];
-				}
-
-				push(@jcols_all, $_);
-				$jcols{$2}=1;
-				if (!$idx->{$2}) { $req_all=1; }
-			}
-			if ($req_all && !$self->{"$jt.load_all"}) {
-				$jdb = $self->load_allrow($jt);
-			}
 
 			#---------------------------------------------
 			# join
 			#---------------------------------------------
 			my %h;
+			my $jdb = $self->load_tbl_by_cols($jtable, $rc);
 			foreach(@$jdb) {
-				$h{$_->{$rc}}=$_;
+				$h{$_->{$rc}} = $_;
 			}
-			my $mapfunc = "sub {\n\tmy (\$x,\$y)=\@_;\n";
-			foreach(keys(%jcols)) {	# need columns for search and sort
-				$mapfunc .= "\t\$x->{'$jn.$_'}=\$y->{$_};\n";
-			}
-			$mapfunc .= '}';
-			my $func = $self->eval_and_cache($mapfunc);
+			delete $h{''};		# delete null
 
 			my $map = {};
-			my $lcol= $ln eq $tname ? $lc : $left;
-			foreach(@$db) {
-				my $z = $h{$_->{$lcol}};
-				$map->{$_->{pkey}} = $z;
-				&$func($_, $z);
-			}
-
-			if ($_->{cols}) {
-				$join_keymap{$jn} = $map;
-
-				my $all = $self->{"$jt.cols"};
-				foreach my $col (@{$_->{cols}}) {
-					my ($c,$n) = $col =~ /^(\w+) +(\w+)$/ ? ($1,$2) : ($col,$col);
-					if (!$all->{$c}) {
-						$self->error($ErrNotFoundCol , ' (for %s)', $jtable, $c, 'LEFT JOIN');
-						return [];
-					}
-					$join_colname{$n} = { tname=>$jn, col=>$c };
-					if (!$self->{"$jt.load_all"} && !$idx->{$c}) {
-						$join_req_all{$jn}=1;
-					}
-				}
-			}
-		}
-	}
-	#-----------------------------------------------------------------------
-	# sort colmuns table name check
-	#-----------------------------------------------------------------------
-	foreach(@$sort) {
-		if ($_ !~ /^(\w+)\.\w+/) { next; }
-		if (!$names{$1}) {
-			$self->error('Table name not found: %s', $_);
-			return [];
-		}
-	}
-
-	#-----------------------------------------------------------------------
-	# search
-	#-----------------------------------------------------------------------
-	my $read_row_method = %join_keymap ? 'override_by_rowfile' : 'read_rowfile';
-	#
-	# if exists join table, keep joined column in row hash. (keep ex.) j.pkey, j.name
-	#
-	if (@target_cols) {
-		my $req_load_all;
-		foreach(@target_cols) {
-			my ($tn,$c) = $_ =~ /^(\w+)\.(\w+)$/ ? ($1,$2) : ($tname,$_);
-
-			if ($tn eq $tname && !$load_cols->{$_}) {
-				$req_load_all = 1;
-			}
-
-			my $t=$names{$tn};
-			if (!$t) {
-				$self->error("Column's table name not defined: %s", $_);
-				return [];
-			}
-			if (!$self->{"$t.cols"}->{$c}) {
-				$self->error($ErrNotFoundCol, $t, $c);
-				return [];
-			}
-		}
-
-		#---------------------------------------------------------------
-		# load all for search
-		#---------------------------------------------------------------
-		my $load_before_L1 = '';
-		my $load_before_L2 = '';
-		if ($req_load_all) {
-			#
-			# require non index column for search
-			#
-			if ($limit_of_search && !$sort_req_load_all) {
-				#
-				# exists limit and can now sort
-				#
-				$db = [sort $sort_func @$db];
-				$req_sort = 0;
-
-				$load_before_L1 = 1;
-				if (!(grep {! $load_cols->{$_}} @target_cols_L1)) {
-					$load_before_L1 = '';
-					$load_before_L2 = 1;
+			if ($ln eq $tname) {	# left is main table
+				foreach(@$db) {
+					my $z = $h{$_->{$lc}};
+					$map->{$_->{pkey}} = $z;
 				}
 			} else {
-				# - no limit
-				# - limit and sort with non index column
-				#
-				my $db_all = $self->load_allrow($table);
-				if (%join_keymap) {
-					# override
-					$db = [ map {{ %{$db->[$_]}, %{$db_all->[$_]} }} (0..$#$db) ];
-				} else {
-					$db = $db_all;
+				$self->load_tbl_by_cols($ltable, $lc);
+				my $lmap = $join_map{$ln};
+				foreach(@$db) {
+					my $l = $lmap->{$_->{pkey}};
+					my $z = $h{$l->{$lc}};
+					$map->{$_->{pkey}} = $z;
 				}
-				$load_cols = $all_cols;
-				$sort_req_load_all = 0;
 			}
+			$join_map{$jn} = $map;		# save mapping
+			push(@maps_arg, $map);
+			$maps_arg_code .= ',$map' . $jn;
 		}
-
-		#---------------------------------------------------------------
-		# Level 1: non text search
-		#---------------------------------------------------------------
-		my $cond_L1='';
-		my %match_h;
-		my %not_match_h;
-		if (@target_cols_L1) {
-			my $err;
-			my @cond;
-			foreach(@match) {
-				my $v    = $h->{match}->{$_};
-				my $info = $all_cols->{$_};
-
-				$v = $self->check_value_for_match($table, $_, $v, $info);
-				if (!defined $v) { $err=1; }
-
-				if (ref($v) eq 'ARRAY') {
-					$match_h{$_} = { map {$_=>1} @$v };
-					push(@cond, "exists\$match_h->{$_}->{\$_->{$_}}");
-					next;
-				}
-				push(@cond, "\$_->{$_}" . ($info->{is_str} || $v eq '' ? "eq'$v'" : "==$v"));
-			}
-			foreach (@not_match) {
-				my $v    = $h->{not_match}->{$_};
-				my $info = $all_cols->{$_};
-
-				$v = $self->check_value_for_match($table, $_, $v, $info);
-				if (!defined $v) { $err=1; }
-
-				if (ref($v) eq 'ARRAY') {
-					$match_h{$_} = { map {$_=>1} @$v };
-					push(@cond, "!exists\$match_h->{$_}->{\$_->{$_}}");
-					next;
-				}
-				push(@cond, "\$_->{$_}" . ($info->{is_str} || $v eq '' ? "ne'$v'" : "!=$v"));
-			}
-			foreach (@flag) {
-				my $v    = $flags->{$_};
-				my $info = $all_cols->{$_};
-				if ($info->{type} ne 'flag') { $self->error('The "%s" column is not flag: %s', $_, $info->{type}); $err=1; next; }
-				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{flag}->{$_}, $info->{type}); $err=1; }
-				push(@cond, "\$_->{$_}==$v");
-			}
-			foreach (@min) {
-				my $v    = $h->{min}->{$_};
-				my $info = $all_cols->{$_};
-				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{min}->{$_}, $info->{type}); $err=1; }
-				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'ge' : '>=') . "$v");
-			}
-			foreach (@max) {
-				my $v    = $h->{max}->{$_};
-				my $info = $all_cols->{$_};
-				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{max}->{$_}, $info->{type}); $err=1; }
-				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'le' : '<=') . "$v");
-			}
-			foreach (@gt) {
-				my $v    = $h->{gt}->{$_};
-				my $info = $all_cols->{$_};
-				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{gt}->{$_}, $info->{type}); $err=1; }
-				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'gt' : '>') . "$v");
-			}
-			foreach (@lt) {
-				my $v    = $h->{lt}->{$_};
-				my $info = $all_cols->{$_};
-				if (! &{$info->{check}}($v)) { $self->error($ErrInvalidVal, $table, $_, $h->{lt}->{$_}, $info->{type}); $err=1; }
-				push(@cond, "\$_->{$_}" . ($info->{is_str} ? 'lt' : '<') . "$v");
-			}
-			foreach (@$is_null) {
-				push(@cond, "\$_->{$_}eq''");
-			}
-			foreach (@$not_null) {
-				push(@cond, "\$_->{$_}ne''");
-			}
-			if ($err) { return []; }
-
-			$cond_L1 = 'if (!(' . join(' && ', @cond) . ')) { next; }';
-			$self->trace("select '$table' where L1: $cond_L1");
-		}
-		$cond_L1 =~ s/->\{((\w+)\.(\w+))\}/$2 eq $tname ? "->{$3}" : "->{'$1'}"/eg;
-
-		#---------------------------------------------------------------
-		# Level 2: text search
-		#---------------------------------------------------------------
-		my $cond_L2='';
-		if (@target_cols_L2) {
-			my $words = $h->{search_words} || [];
-			my $not   = $h->{search_not}   || [];
-			my $cols  = $s_cols;	# $h->{search_cols};
-			my $match = $s_match;	# $h->{search_match};
-			my $equal = $s_equal;	# $h->{search_equal};
-
-			my @cond;
-			foreach(@$words) {
-				my $x = $_ =~ s/([\\\"])/\\$1/rg;
-				my $r = $_ =~ s/([^0-9A-Za-z\x80-\xff])/"\\x" . unpack('H2',$1)/reg;
-
-				my @ary;
-				foreach (@$equal) {
-					push(@ary, "\$_->{$_} eq \"$x\"");
-				}
-				foreach (@$cols) {
-					push(@ary, "\$_->{$_} =~ /$r/i");
-				}
-				foreach (@$match) {
-					push(@ary, "\$_->{$_} =~ /^$r\$/i");
-				}
-				push(@cond, '(' . join(' || ', @ary) . ')');
-			}
-
-			my @not_words_reg;
-			foreach(@$not) {
-				my $x = $_ =~ s/([\\\"])/\\$1/rg;
-				my $r = $_ =~ s/([^0-9A-Za-z\x80-\xff])/"\\x" . unpack('H2',$1)/reg;
-
-				my @ary;
-				foreach (@$equal) {
-					push(@ary, "\$_->{$_} ne \"$x\"");
-				}
-				foreach (@$cols) {
-					push(@ary, "\$_->{$_} !~ /$r/i");
-				}
-				foreach (@$match) {
-					push(@ary, "\$_->{$_} !~ /^$r\$/i");
-				}
-				push(@cond, join(' && ', @ary));
-			}
-
-			$cond_L2 = 'if (!(' . join(' && ', @cond) . ')) { next; }';
-			$self->trace("select '$table' where L2: $cond_L2");
-		}
-		$cond_L2 =~ s/->\{((\w+)\.(\w+))\}/$2 eq $tname ? "->{$3}" : "->{'$1'}"/eg;
-
-		#---------------------------------------------------------------
-		# make search function
-		#---------------------------------------------------------------
-		if ($load_before_L1 || $load_before_L2) {
-			$dir =~ s/\\\'//g;
-			$ext =~ s/\\\'//g;
-			my $load = "\$_ = \$self->$read_row_method('$table', \$_);";
-			if ($load_before_L1) { $load_before_L1 = $load; }
-				else         { $load_before_L2 = $load; }
-		}
-		my $limit_check='';
-		if ($limit_of_search) {
-			my $x = $limit_of_search-1;
-			$limit_check = "if (\$#newary >= $x) { last; }";
-		}
-		my $func=<<FUNCTION_TEXT;
-sub {
-	my (\$self, \$db, \$match_h, \$not_match_h) = \@_;
-	my \@newary;
-	foreach(\@\$db) {
-		$load_before_L1
-		$cond_L1
-		$load_before_L2
-		$cond_L2
-		push(\@newary, \$_);
-		$limit_check
 	}
-	return \\\@newary;
-}
-FUNCTION_TEXT
-		if ($self->{TRACE}) { $func =~ s/\t+\n//g; }
 
-		$func = $self->eval_and_cache($func);
-		$db = &$func($self, $db, \%match_h, \%not_match_h);
-
-	} elsif ($db eq $db_orig) {
-		# copy for save interrnal table data
-		$db = [ my @newary = @$db ];
+	#-----------------------------------------------------------------------
+	# limit
+	#-----------------------------------------------------------------------
+	my $limit  = int($arg->{limit});
+	my $offset = int($arg->{offset});
+	if ($arg->{limit} ne '' && !$limit) { return []; }	# limit is 0
+	if ($offset<0) {
+		$self->error('Offset must not be negative: %s', $arg->{offset});
+		return [];
 	}
-	if ($#$db < 0) { return []; }
+
+	my $limit_check_code='';
+	if (!wantarray && $limit && $limit < $#$db+1) {		# wantarray is require hits
+		my $x = $offset + $limit-1;
+		$limit_check_code = "if (\$#ary >= $x) { last; }";
+	}
+
+	#-----------------------------------------------------------------------
+	# check column
+	#-----------------------------------------------------------------------
+	my $check_col = sub {
+		my $col= shift;
+		my $ci = $colinfo{$col};
+		if (!$ci) {
+			$self->error('Not found column: %s', $col);
+			return;
+		}
+		if ($ci->{dup}) {
+			$self->error('There are multiple corresponding columns: %s', $col);
+			return;
+		}
+
+		my $t  = $ci->{table};
+		my $tn = $ci->{tname};
+		my $c  = $ci->{cname};
+
+		# main table
+		if ($tn eq $tname) {
+			if (!$self->{"$t.index"}->{$c}) {
+				foreach(@$db) {
+					$self->read_rowfile_override($table, $_);
+				}
+			}
+			return ($ci, "\$_->{$c}", "\$*->{$c}");
+		}
+
+		# join table
+		if (!$self->{"$t.index"}->{$c}) {
+			my $map = $join_map{$tn};
+			foreach(@$db) {
+				my $h = $map->{$_->{pkey}};
+				if (!$h) { next; }
+				$self->read_rowfile_override($t, $h);
+			}
+		}
+		return ($ci, "\$map$tn\->{\$pkey}->{$c}", "(\$map$tn\->{\$*->{pkey}} || {})->{$c}");
+	};
 
 	#-----------------------------------------------------------------------
 	# sort
 	#-----------------------------------------------------------------------
-	if ($req_sort) {
-		if ($sort_req_load_all) {
-			$db = [ map { $self->$read_row_method($table, $_) } @$db ];
-			$load_cols = $all_cols;
+	my $sort_func = $arg->{sort} && sub {
+		my $list = shift;
+
+		my @cond;
+		my $sort = ref($arg->{sort}) ? $arg->{sort} : [ $arg->{sort} ];
+		foreach(@$sort) {
+			my $c = $_;
+			my $rev = ord($c) == 0x2d;		# '-colname'
+			if ($rev) {
+				$c = substr($c, 1);
+			}
+
+			my ($ci, $_code, $scolcode) = &$check_col($c);
+			if (!$ci) { return; }			# error exit
+
+			my $left  = $scolcode =~ tr/*/a/r;
+			my $right = $scolcode =~ tr/*/b/r;
+			my $op    = $ci->{is_str} ? 'cmp' : '<=>';
+			push(@cond, $rev ? "$right$op$left" : "$left$op$right");
 		}
-		$db = [sort $sort_func @$db];
+
+		my $cond = join(' || ', @cond);
+		my $func = "sub { my (\$db$maps_arg_code)=\@_; "
+			 . "return [ sort { $cond } \@\$db ] }";
+		if ($self->{TRACE}) { $func =~ s/\t+\n//g; }
+		$func = $self->eval_and_cache($func);
+
+		return &$func($list, @maps_arg);
+	};
+
+	if ($sort_func && $limit_check_code) {
+		$db = &$sort_func($db);
+		if (!$db) { return []; }	# error
+		$sort_func = undef;		# sorted
+	}
+
+	#-----------------------------------------------------------------------
+	# where: non text search
+	#-----------------------------------------------------------------------
+	my @condlist = (
+		{
+			key 	=> 'match',
+			array	=> 'm',
+			num	=> '==',
+			str	=> 'eq'
+		},{
+			key 	=> 'not_match',
+			array	=> 'n',
+			not	=> '!',
+			num	=> '!=',
+			str	=> 'ne'
+		},
+		{ key => 'min', num => '>=', str => 'ge' },
+		{ key => 'max', num => '<=', str => 'le' },
+		{ key => 'gt',  num => '>',  str => 'gt' },
+		{ key => 'lt',  num => '<',  str => 'lt' },
+		{ key => 'flag',    num => '==', flag=>1 },
+		{ key => 'boolean', num => '==', flag=>1 },
+		{ key => 'is_null',   is => "eq''" },
+		{ key => 'not_null',  is => "ne''" }
+	);
+	my @cond;
+	my %in;
+	my $err;
+	foreach my $cn (@condlist) {
+		my $key = $cn->{key};
+		my $h   = $arg->{$key};
+		if (!$h) { next; }
+
+		my $is  = $cn->{is};
+		my $ary = $is ? $h : [ sort(keys(%$h)) ];	# sort() is required for "eval_and_cache".
+		foreach(@$ary) {
+			my ($ci, $colcode) = &$check_col($_);
+			if (!$ci) { $err=1; next; }
+
+			if ($is) {				# is null / is not null
+				push(@cond, $colcode . $is);
+				next;
+			}
+
+			if ($cn->{flag}) {
+				if ($ci->{type} ne 'flag') {
+					$self->error('The "%s" column is not boolean: %s', $_, $ci->{type});
+					$err=1;
+					next;
+				}
+			}
+			#
+			# compare with value
+			#
+			my $v  = $h->{$_};
+			my $ar = $cn->{array};
+			if ($ar) {
+				$v = $self->check_value_for_match($ci->{table}, $_, $v, $ci);
+				if (!defined $v) { $err=1; next; }
+
+				if (ref($v) eq 'ARRAY') {
+					my $inkey = $ar . $ci->{cname};
+					$in{$inkey} = { map {$_=>1} @$v };
+					push(@cond, "$cn->{not}exists\$in{$inkey}->{$colcode}");
+					next;
+				}
+			} elsif (! &{$ci->{check}}($v)) {
+				$self->error($ErrInvalidVal, $table, $_, $h->{$_}, $ci->{type});
+				$err=1;
+				next;
+			}
+			#
+			# save condition
+			#
+			push(@cond, $colcode . ($ci->{is_str} || $v eq '' ? "$cn->{str}'$v'" : "$cn->{num}$v"));
+		}
+	}
+	if ($err) { return []; }
+
+	#
+	# Execute non text search
+	#
+	my $load_pkey_code = %join_map ? 'my $pkey=$_->{pkey};' : '';
+	if (@cond) {
+		my $cond = join(' && ', @cond);
+		my $func = <<FUNCTION;
+sub {
+	my (\$db,\$in$maps_arg_code) = \@_;
+	my \@ary;
+	foreach(\@\$db) {
+		$load_pkey_code
+		if (!($cond)) { next; }
+		push(\@ary, \$_);
+		$limit_check_code
+	}
+	return \\\@ary;
+}
+FUNCTION
+		if ($self->{TRACE}) { $func =~ s/\t+\n//g; }
+		$func = $self->eval_and_cache($func);
+		$db = &$func($db, \%in, @maps_arg);
+	}
+
+	#-----------------------------------------------------------------------
+	# where: text search
+	#-----------------------------------------------------------------------
+	undef @cond;
+	my $s_words = $arg->{search_words} || [];
+	my $s_not   = $arg->{search_not}   || [];
+	if (@$s_words || @$s_not) {
+		my $cols  = $arg->{search_cols}  || [];
+		my $match = $arg->{search_match} || [];
+		my $equal = $arg->{search_equal} || [];
+
+		foreach(@$s_words) {
+			if ($_ eq '') { next; }
+			my $x = $_ =~ s/([\\\"])/\\$1/rg;
+			my $r = $_ =~ s/([^0-9A-Za-z\x80-\xff])/"\\x" . unpack('H2',$1)/reg;
+
+			my @ary;
+			foreach (@$equal) {
+				push(@ary, "\$_->{$_} eq \"$x\"");
+			}
+			foreach (@$cols) {
+				push(@ary, "\$_->{$_} =~ /$r/i");
+			}
+			foreach (@$match) {
+				push(@ary, "\$_->{$_} =~ /^$r\$/i");
+			}
+			push(@cond, '(' . join(' || ', @ary) . ')');
+		}
+
+		my @not_words_reg;
+		foreach(@$s_not) {
+			if ($_ eq '') { next; }
+			my $x = $_ =~ s/([\\\"])/\\$1/rg;
+			my $r = $_ =~ s/([^0-9A-Za-z\x80-\xff])/"\\x" . unpack('H2',$1)/reg;
+
+			my @ary;
+			foreach (@$equal) {
+				push(@ary, "\$_->{$_} ne \"$x\"");
+			}
+			foreach (@$cols) {
+				push(@ary, "\$_->{$_} !~ /$r/i");
+			}
+			foreach (@$match) {
+				push(@ary, "\$_->{$_} !~ /^$r\$/i");
+			}
+			push(@cond, join(' && ', @ary));
+		}
+	}
+	#
+	# Execute text search
+	#
+	if (@cond) {
+		my $cond = join(' && ', @cond);
+		my $func = <<FUNCTION;
+sub {
+	my (\$db$maps_arg_code) = \@_;
+	my \@ary;
+	foreach(\@\$db) {
+		$load_pkey_code
+		if (!($cond)) { next; }
+		push(\@ary, \$_);
+		$limit_check_code
+	}
+	return \\\@ary;
+}
+FUNCTION
+		if ($self->{TRACE}) { $func =~ s/\t+\n//g; }
+		$func = $self->eval_and_cache($func);
+		$db = &$func($db, @maps_arg);
+	}
+
+	#-----------------------------------------------------------------------
+	# sort
+	#-----------------------------------------------------------------------
+	if ($sort_func) {
+		$db = &$sort_func($db);
+		if (!$db) { return []; }	# error
+		$sort_func = undef;		# sorted
 	}
 
 	#-----------------------------------------------------------------------
@@ -582,86 +584,45 @@ FUNCTION_TEXT
 	#-----------------------------------------------------------------------
 	# limit and offset
 	#-----------------------------------------------------------------------
-	if ($h->{offset} ne '') {
-		splice(@$db, 0, int($h->{offset}));
+	if (0 < $offset) {
+		splice(@$db, 0, $offset);
 	}
-	if ($h->{limit} ne '') {
-		splice(@$db, int($h->{limit}));
-	}
-
-	#-----------------------------------------------------------------------
-	# all data load?
-	#-----------------------------------------------------------------------
-	if ($load_cols ne $all_cols) {
-		my $cols = $sel_cols || [ keys(%{$self->{"$table.cols"}}) ];
-		if (grep { !$load_cols->{$_} } @$cols) {
-			foreach(@$db) {
-				$_ = $self->$read_row_method($table, $_);
-			}
-		}
+	if ($limit) {
+		splice(@$db, $limit);
 	}
 
 	#-----------------------------------------------------------------------
-	# join or make copy
+	# make return data
 	#-----------------------------------------------------------------------
-	if (%join_keymap) {	# with join columns
-		my $func = "sub {\n" . 'my ($self,$db,$map)=@_;' . "\n";
-		foreach(keys(%join_keymap)) {		# $_ = table name
-			$func .= "my \$m$_=\$map->{$_};\n";
+	if (!%join_map && (!ref($arg_cols) && $arg_cols eq '*' || ref($arg_cols) && $#$arg_cols==0 && $arg_cols->[0] eq '*')) {
+		#
+		# single table and load all colmun data
+		# copy all row data
+		#
+		foreach(@selcols) {
+			&$check_col($_);	# load row data if need
 		}
-		$func .= 'foreach(@$db) {';
-		$func .= 'my $pkey=$_->{pkey};' . "\n";
+		$db = [ map { my %x=%$_; delete $x{'*'}; \%x } @$db ];
 
-		foreach(keys(%join_req_all)) {			# require non index data
-			$func .= "\$m$_\->{\$pkey} &&= \$self->read_rowfile('$names{$_}', \$m$_\->{\$pkey});\n";
-		}
-		if (!$sel_cols) {
-			$func .= "delete \$_->{'*'};\n";	# if exists join $db is deep copy, therfore can break data.
-			foreach(@jcols_all) {
-				$func .= "delete \$_->{'$_'};\n";
-			}
-		}
-		$func .= '$_ = {' . "\n";
-		if ($sel_cols) {
-			foreach(@$sel_cols) {
-				$func .= "$_=>\$_->{$_},\n";
-			}
-		} else {
-			$func .= "\%\$_,\n";
-		}
-		foreach(keys(%join_colname)) {
-			my $x  = $join_colname{$_};
-			my $tn = $x->{tname};			# table name
-			my $c  = $x->{col};
-			$func .= "$_=>\$m$tn\->{\$pkey}->{$c},\n";
-		}
-		chop($func); chop($func);
-
-		$func .= "\n}}}";
-		$func = $self->eval_and_cache($func);
-		&$func($self, $db, \%join_keymap);
-
-	} elsif ($sel_cols) {
-		my $func="sub {\n" . 'my $db = shift; foreach(@$db) {';
-		$func .= '$_ = {';
-		foreach(@$sel_cols) {
-			$func .= "$_=>\$_->{$_},"
-		}
-		chop($func);
-		$func .= '}}}';
-		$func = $self->eval_and_cache($func);
-		&$func($db);
 	} else {
-		foreach(@$db) {
-			my %h = %$_;
-			$_ = \%h;
-			delete $h{'*'};		# loaded flag
+		#
+		# $selinfo{name} = 'col'
+		#	-->> select col as name
+		#
+		my @mapcode;
+		foreach my $n (keys(%selinfo)) {
+			my ($ci, $colcode) = &$check_col($selinfo{$n});
+			push(@mapcode, "$n=>$colcode");
 		}
+
+		my $func= "sub { my (\$db$maps_arg_code)=\@_; "
+			. "return [ map { $load_pkey_code\{" . join(',', @mapcode) . "} } \@\$db ]; }";
+		$func = $self->eval_and_cache($func);
+		$db = &$func($db, @maps_arg);
 	}
 
 	return wantarray ? ($db,$hits) : $db;
 }
-
 
 ################################################################################
 # subrotine for select
@@ -714,36 +675,20 @@ sub check_value_for_match {
 }
 
 #-------------------------------------------------------------------------------
-# generate order by function
+# load target table row data by require columns
 #-------------------------------------------------------------------------------
-sub generate_sort_func {
-	my ($self, $table, $h, $tname) = @_;
-	my @sort = ref($h->{sort}) ? @{ $h->{sort} } : ($h->{sort} eq '' ? () : ($h->{sort}));
-	my $cols = $self->{"$table.cols"};
-	my @cond;
-	foreach(@sort) {
-		my $col = $_;
-		my $rev = ord($col) == 0x2d;
-		if ($rev) {
-			$col = $_ = substr($col, 1);
-		}
-		$col =~ s/[^\w\.]//g;
-		if ($col eq '') { next; }
-		if ($col =~ /^(\w+)\.(\w+)$/ && $1 eq $tname) {
-			$col = $_ = $2;
-		}
-
-		my $op = $cols->{$col}->{is_str} ? 'cmp' : '<=>';
-		if ($col =~ /\./) { $col = "'$col'"; }
-		push(@cond, $rev ? "\$b->{$col}$op\$a->{$col}" : "\$a->{$col}$op\$b->{$col}");
+sub load_tbl_by_cols {
+	my $self = shift;
+	my $table= shift;
+	if ($self->{"$table.load_all"}) {
+		return $self->{"$table.tbl"};
 	}
-	my $func = sub { 1; };
-	if (@cond) {
-		$func = 'sub{'. join('||',@cond) .'}';
-		$func = $self->eval_and_cache($func);
+	my $idx = $self->{"$table.index"};
+	foreach(@_) {
+		if ($idx->{$_}) { next; }
+		return $self->load_allrow($table, 'read_rowfile_override');
 	}
-
-	return wantarray ? ($func, \@sort) : $func;
+	return $self->{"$table.tbl"};
 }
 
 ################################################################################
@@ -896,15 +841,19 @@ sub read_rowfile {
 	return $h;
 }
 
-sub override_by_rowfile {		# keep original hash data
+sub read_rowfile_override {
 	my ($self, $table, $h) = @_;
-	if ($h->{'*'}) { return $h; }
+	if ($h->{'*'}) { return $h; }	# loaded flag
 	my $ROBJ = $self->{ROBJ};
 
 	my $ext = $self->{ext};
 	my $dir = $self->{dir} . $table . '/';
-	my $x = $ROBJ->fread_hash_cached($dir . sprintf($self->{filename_format}, $h->{pkey}). $ext);
-	return { %$h, %$x, '*'=>1 };
+	my $h2 = $ROBJ->fread_hash_cached($dir . sprintf($self->{filename_format}, $h->{pkey}). $ext);
+	foreach(keys(%$h2)) {
+		$h->{$_}=$h2->{$_};	# override
+	}
+	$h->{'*'}=1;			# loaded flag
+	return $h;
 }
 
 #-------------------------------------------------------------------------------
@@ -913,12 +862,13 @@ sub override_by_rowfile {		# keep original hash data
 sub load_allrow {
 	my $self  = shift;
 	my $table = shift;
+	my $row_fn= shift || 'read_rowfile';
 	if ($self->{"$table.load_all"}) { return $self->{"$table.tbl"}; }
 
 	$self->trace("load all data on '$table'");
 	my $ext = $self->{ext};
 	my $dir = $self->{dir} . $table . '/';
-	$self->{"$table.tbl"} = [ map { $self->read_rowfile($table, $_) } @{$self->{"$table.tbl"}} ];
+	$self->{"$table.tbl"} = [ map { $self->$row_fn($table, $_) } @{$self->{"$table.tbl"}} ];
 	$self->{"$table.load_all"} = 1;
 	$IndexCache{"$table.load_all"} = 1;
 	return ($IndexCache{$table} = $self->{"$table.tbl"});

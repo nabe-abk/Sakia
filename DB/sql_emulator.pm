@@ -85,40 +85,33 @@ sub sql_emu_select {
 	}
 
 	my %h;
-	my $col_star;
-	my $col_count;
-	my (@cols, @min_cols, @max_cols, @sum_cols);
+	my @cols;
+	my $group_cols=0;
 	foreach(split(/ ?, ?/, $cols)) {
 		if ($_ eq '*') {
-			$col_star=1;
+			push(@cols, '*');
 			next;
 		}
-		my $c   = $_;
-		my $ary = \@cols;
-		if ($c =~ /^\w+ ?\(.*\) \w+$/i) {
-			return $self->error('Not support func() column naming: %s', $_);
-
-		} elsif ($c =~ /^count ?\( ?(.*?) ?\)$/i) {
-			$c = $1 =~ tr/A-Z/a-z/r;
-			if ($c !~ /^pkey$/i) {
-				return $self->error('count() only supports "pkey" as target: %s', $_);
-			}
-			$col_count = 1;
-			next;
-
-		} elsif ($c =~ /^(min|max|sum) ?\( ?(.*?) ?\)$/i) {
-			$c = $2;
-			my $fn = $1 =~ tr/A-Z/a-z/r;
-			$ary = $fn eq 'min' ? \@min_cols : $ary;
-			$ary = $fn eq 'max' ? \@max_cols : $ary;
-			$ary = $fn eq 'sum' ? \@sum_cols : $ary;
+		my $c = $_;
+		my $n = '';
+		if ($c =~ /^(.*)( \w+)$/) {		# col name
+			$c = $1;
+			$n = $2;
 		}
-		if ($c !~ /^\w+(?:\.\w+)?(?: \w+)?$/) {
+		$c =~ s/ //g;
+
+		if ($c =~ /^\w+\(([^\)]*)\)$/i) {	# func(col)
+			$c = $1;
+			$group_cols++;
+		}
+		if ($c !~ /^\w+(?:\.(?:\w+|\*))?$/) {
 			return $self->error('SELECT colmuns error: %s', $_);
 		}
-		push(@$ary, $c);
+		push(@cols, "$c$n");
 	}
-	$h{cols} = $col_star ? undef : \@cols;
+	if ($#cols!=0 || $cols[0] ne '*') {
+		$h{cols} = \@cols;
+	}
 
 	if (! $self->next_word_is('FROM')) { return; }
 
@@ -131,7 +124,7 @@ sub sql_emu_select {
 		my $w = $self->next_word();
 
 		if ($w eq 'LEFT') {
-			if ($exists{WHERE} || $exists{ORDER}) {
+			if ($exists{WHERE} || $exists{GROUP} || $exists{ORDER} || $exists{OFFSET} || $exists{LIMIT}) {
 				return $self->error('SQL error: %s', $w);
 			}
 
@@ -172,13 +165,13 @@ sub sql_emu_select {
 			});
 
 		} elsif ($w eq 'WHERE') {
-			if ($exists{WHERE} || $exists{GROUP} || $exists{ORDER}) {
+			if ($exists{WHERE} || $exists{GROUP} || $exists{ORDER} || $exists{OFFSET} || $exists{LIMIT}) {
 				return $self->error('SQL error: %s', $w);
 			}
 			if (! $self->parse_where(\%h)) { return; }
 
 		} elsif ($w eq 'GROUP') {
-			if ($exists{ORDER}) {
+			if ($exists{GROUP} || $exists{ORDER} || $exists{OFFSET} || $exists{LIMIT}) {
 				return $self->error('SQL error: %s', $w);
 			}
 
@@ -192,7 +185,7 @@ sub sql_emu_select {
 			$h{group_by} = $gcol;
 
 		} elsif ($w eq 'ORDER') {
-			if ($exists{LIMIT}) {
+			if ($exists{ORDER} || $exists{OFFSET} || $exists{LIMIT}) {
 				return $self->error('SQL error: %s', $w);
 			}
 
@@ -208,7 +201,22 @@ sub sql_emu_select {
 			}
 			$h{sort} = \@ary;
 
+		} elsif ($w eq 'OFFSET') {
+			if ($exists{OFFSET} || $exists{LIMIT}) {
+				return $self->error('SQL error: %s', $w);
+			}
+
+			my $v = $self->next_value();
+			if ($v !~ /^(\+|\-|)\d+$/) {
+				return $self->error('SQL error: %s %s', $w, $v);
+			}
+			$h{offset} = int($v);
+
 		} elsif ($w eq 'LIMIT') {
+			if ($exists{LIMIT}) {
+				return $self->error('SQL error: %s', $w);
+			}
+
 			my $v = $self->next_value();
 			if ($v !~ /^(\+|\-|)\d+$/) {
 				return $self->error('SQL error: %s %s', $w, $v);
@@ -226,12 +234,9 @@ sub sql_emu_select {
 	#---------------------------------------------------
 	my $func = 'select';
 	if (exists($h{group_by})) {
-		$h{min_cols} = \@min_cols;
-		$h{max_cols} = \@max_cols;
-		$h{sum_cols} = \@sum_cols;
 		$func = 'select_by_group';
 
-	} elsif($col_count || @min_cols || @max_cols || @sum_cols) {
+	} elsif($group_cols) {
 		return $self->error('func() column requires a "GROUP BY": %s', $cols);
 	}
 
@@ -768,6 +773,18 @@ sub parse_where {
 		}
 
 		#-----------------------------------------------------
+		# boolean operator
+		#-----------------------------------------------------
+		if ($x =~ /^== ?true$/i) {
+			$h->{boolean}->{$col} = 1;
+			next;
+		}
+		if ($x =~ /^== ?false$/i) {
+			$h->{boolean}->{$col} = 0;
+			next;
+		}
+
+		#-----------------------------------------------------
 		# general operator
 		#-----------------------------------------------------
 		if ($x =~ /^(=|!=|>=|>|<|<=)(.*)$/) {
@@ -875,6 +892,7 @@ my %KEYWORDS = map { $_ => 1} qw(
 	ORDER
 	BY
 	GROUP
+	OFFSET
 	LIMIT
 
 	TABLE

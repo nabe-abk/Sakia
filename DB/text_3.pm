@@ -35,15 +35,15 @@ sub create_table {
 	#--------------------------------------------------
 	my $dir = $self->{dir} . $table . '/';
 	if (!-e $dir && !mkdir($dir)) {
-		$self->error("mkdir '$dir' error : $!");
+		$self->error("mkdir \"$dir\" error: $!");
 		return 30;
 	}
 	if (-e "$dir$self->{index_backup}") {
-		$self->error("'%s' table already exists", $table);
+		$self->error('"%s" table already exists', $table);
 		return 31;
 	}
 	if ($table =~ /^\d/) {
-		$self->error("To be a 'a-z' or '_' at the first character of a table name : '%s'", $table);
+		$self->error("To be a 'a-z' or '_' at the first character of a table name: %s", $table);
 		rmdir($dir);
 		return 32;
 	}
@@ -104,7 +104,7 @@ sub parse_column {
 	my %save;
 
 	my $col = $h->{name} =~ tr/A-Z/a-z/r;
-	if ($col eq '' || $col =~ /\W/) {
+	if ($col eq '' || $col =~ /\W/ || $col !~ /^[a-z_]/) {
 		$self->error('Illegal column name: %s', $col);
 		return 7;
 	}
@@ -255,8 +255,7 @@ sub add_column {
 		my $val = $de eq '' ? '' : (ord($de)==0x23 ? substr($de,1) : $self->load_sql_context($table, $col, $de));
 
 		# add column from all row data
-		$self->load_allrow($table);
-		my $all = $self->{"$table.tbl"};
+		my $all = $self->load_allrow($table);
 		foreach(@$all) {
 			$_->{$col} = $val;
 			$self->write_rowfile($table, $_);
@@ -306,8 +305,7 @@ sub drop_column {
 	delete $self->{"$table.ref"}->{$col};
 
 	# delete column from all row data
-	$self->load_allrow($table);
-	my $all = $self->{"$table.tbl"};
+	my $all = $self->load_allrow($table);
 	foreach(@$all) {
 		delete $_->{$col};
 		$self->write_rowfile($table, $_);

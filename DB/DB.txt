@@ -123,9 +123,10 @@ ltext		大きいテキスト(64KB超え)
 	$lj->{table}		LEFT JOIN するテーブル
 	$lj->{left}		JOIN条件の左側。"name.col" 形式。
 	$lj->{right}		JOIN条件の右側。"name.col" 形式。
-	$lj->{cols}->[]		最終結果に追加で返す $lj->{table} のカラム。
-				"col name"と書くと、colカラムをnameとして取り出します。
-				※メインの $h{cols} では名付けはできません。
+
+	TextDBにおいて、join する対象のカラムが複数見つかった場合、
+	そのうち1つのみ結合されます。これは標準SQLとは異なる動作です。
+	基本的に、join対象カラムは UNIQUE である必要があります。
 
   （例）$h->{ljoin} = {
 		table	=> 'usr u',
