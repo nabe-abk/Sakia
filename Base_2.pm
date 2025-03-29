@@ -894,23 +894,23 @@ sub clone {
 #-------------------------------------------------------------------------------
 sub debug {
 	my $self = shift;
-	$self->_debug(join(' ', @_));			## safe
+	$self->_debug(join(' ', @_));						## safe
 }
 sub debug_json {
 	my $self = shift;
-	$self->_debug($self->generate_json(@_));	## safe
+	$self->_debug(map { ref($_) ? $self->generate_json($_) : $_ } @_);	## safe
 }
 sub _debug {
 	my $self = shift;
-	my ($msg, $level) = @_;
+	my $msg  = join(' ', @_);
 	$self->esc_dest($msg);
 	$msg =~ s/\n/<br>/g;
 	$msg =~ s/ /&ensp;/g;
-	my ($pack, $file, $line) = caller(int($level)+1);
+	my ($pack, $file, $line) = caller(1);
 	push(@{$self->{Debug}}, $msg . "<!-- in $file line $line -->");
 }
 sub clear_debug {
-	my $self  = shift;
+	my $self = shift;
 	return $self->_clear_msg('Debug', @_);
 }
 

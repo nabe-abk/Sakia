@@ -766,11 +766,12 @@ sub _loadpm {
 
 sub _export_debug {
 	my $self = shift;
-	$self->{ROBJ}->_debug(join(' ', @_));				## safe
+	$self->{ROBJ}->_debug(@_);						## safe
 }
 sub _export_debug_json {
 	my $self = shift;
-	$self->{ROBJ}->_debug($self->{ROBJ}->generate_json(@_));	## safe
+	my $ROBJ = $self->{ROBJ};
+	$ROBJ->_debug(map { ref($_) ? $ROBJ->generate_json($_) : $_ } @_);	## safe
 }
 ################################################################################
 # Query/Form
@@ -978,7 +979,7 @@ sub msg {
 	return $msg;
 }
 sub clear_msg {
-	my $self  = shift;
+	my $self = shift;
 	return $self->_clear_msg('Msg', @_);
 }
 sub _clear_msg {
@@ -991,7 +992,7 @@ sub _clear_msg {
 }
 
 sub warning {
-	my $self  = shift;
+	my $self = shift;
 	my $msg  = $self->translate(@_);
 	$self->esc_dest($msg);
 	push(@{$self->{Debug}}, '[Warning] ' . $msg);
@@ -1014,7 +1015,7 @@ sub error_from {
 	return $msg;
 }
 sub clear_error {
-	my $self  = shift;
+	my $self = shift;
 	return $self->_clear_msg('Error', @_);
 }
 
@@ -1042,8 +1043,8 @@ sub make_call_from {
 }
 
 sub output_error {
-	my $self  = shift;
-	my $ctype = shift;
+	my $self = shift;
+	my $ctype= shift;
 	if ($ENV{SERVER_PROTOCOL} && $ctype) {
 		$self->output_http_headers($ctype, @_);
 	}
