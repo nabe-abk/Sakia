@@ -178,9 +178,13 @@ sub load_logs {
 	my $y = int($query->{year});
 	my $m = int($query->{mon});
 	if ($y && $m) {
-		$h{min}->{tm} = sprintf("%d-%d-01", $y, $m);
+		$h{min}->{tm} = "$y-$m-01";
 		$m++; if (12<$m) { $m=1; $y++; }
-		$h{lt}->{tm}  = sprintf("%d-%d-01", $y, $m);
+		$h{lt}->{tm}  = "$y-$m-01";
+	} elsif ($y) {
+		$h{min}->{tm} = "$y-01-01";
+		$y++;
+		$h{lt}->{tm}  = "$y-01-01";
 	}
 
 	return $DB->select($table, \%h);
