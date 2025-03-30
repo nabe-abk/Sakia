@@ -1,5 +1,5 @@
 ################################################################################
-データベースシステム Ver1.70			Copyright (C)2025 nabe@abk
+データベースシステム Ver1.80			Copyright (C)2025 nabe@abk
 ################################################################################
 [TAB=8]
 
@@ -76,6 +76,7 @@ ltext		大きいテキスト(64KB超え)
 	$table			テーブル名。テーブル名に名前をつけることもできる。
 				（例）"usr u" -> "select * from usr as u"
 
+検索条件
 	$h{match}->{<col>}	一致検索。col とその値。
 				値が配列リファレンスのとき、いずれかの値との一致検索
 	$h{not_match}->{<col>}	不一致検索。配列指定可能。
@@ -97,20 +98,34 @@ ltext		大きいテキスト(64KB超え)
 	$h{search_match}	一致検索カラム（配列リファレンス） / case insensitive
 	$h{search_equal}	一致検索カラム（配列リファレンス） / case sensitive
 
+	複数検索条件の場合 and として扱われる。
+
+その他オプション
 	$h{offset}		取得開始するオフセット
 	$h{limit}		取得最大行数
-
-	$h{sort}		ソートするカラム。複数指定が配列refで。
-				"-col" と指定すると、降順になる。
-
-	$h{cols}->[]		必要なカラムを指定（配列リファレンスかスカラ）
-				cols が未定義時はすべて
-
 	$h{want_sth}		(RDBMSのみ) 取得結果ではなく $sth を返す。
 
-　複数検索条件の場合 and として扱われる。
+	$h{group_by}		GROUP BY をするカラム（1つのみ）
+	$h{cols}->[]		結果として取り出すカラムを指定（スカラ or 配列リファレンス）。
 
-　特殊な引数
+	cols が未指定のときは「*」を指定したとみなされる。
+	あるテーブルの全カラムを指定する場合: 'tbl.*'
+	取得名を指定する場合: 'col var1' --> select col2 as var1
+	group_by指定時、関数も使用可能: 'sum(col) sum_col'
+	使用可能な関数: min(), max(), sum(), count()
+	関数付きカラムの取得名を省略した場合のデフォルト名: min(xxx.pkey) --> min_pkey
+
+	MySQLでは大文字のカラム名（や取得名）を指定した場合、
+	大文字のハッシュキーとして取り出されます。原則小文字を使用するように注意してください。
+
+	$h{sort}		ソートするカラムを指定（スカラ or 配列リファレンス）。
+				"-col" と指定すると、降順になる。
+
+	TextDBにおいて、カラムに取得名を付けたとき、
+	「group_by」未指定ならば、その取得名を指定し sort することはできません（標準SQLでは有効）。
+	「group_by」を指定した場合は、その取得名に対してのみ sort することができます。
+
+特殊な引数
 	$h{RDB_where}		(RDBMSのみ) where条件を直接「追加(and)」指定する。
 				危険であるので変数埋め込みは絶対しないこと。
 				「' ; \」および「\x80-\xff」以降は除去される。
@@ -119,10 +134,11 @@ ltext		大きいテキスト(64KB超え)
 				sort条件と並列指定した場合は、
 				RDB_order の後にsort条件が評価される。
 
-　LEFT JOIN: $h{ljoin} = $lj	ハッシュまたはハッシュの配列として指定する。
-	$lj->{table}		LEFT JOIN するテーブル
-	$lj->{left}		JOIN条件の左側。"name.col" 形式。
-	$lj->{right}		JOIN条件の右側。"name.col" 形式。
+LEFT JOIN
+	$h{ljoin} = $lj		ハッシュまたはハッシュの配列として指定する。
+		$lj->{table}	LEFT JOIN するテーブル
+		$lj->{left}	JOIN条件の左側。"name.col" 形式。
+		$lj->{right}	JOIN条件の右側。"name.col" 形式。
 
 	TextDBにおいて、join する対象のカラムが複数見つかった場合、
 	そのうち1つのみ結合されます。これは標準SQLとは異なる動作です。
@@ -196,38 +212,6 @@ $pkey = $DB->select_match_pkey1($table, $col, $val, $col2, $val2, ...);
 Ret:
 	0 以外		（成功時）
 	0		（失敗時）
-
-================================================================================
-●データの集計
-================================================================================
-$rah = $DB->select_by_group($table, \%h);
-
-	$table			テーブル名
-	$h{group_by}		GROUP BY をするカラム（1つのみ。省略可）
-	$h{min_cols}		最小値をとるカラム（配列可/省略可）
-	$h{max_cols}		最大値をとるカラム（配列可/省略可）
-	$h{sum_cols}		総和をとるカラム　（配列可/省略可）
-
-	$h{xxx}			ソート条件/検索条件/LEFT JOIN。
-				select と同一のものが使用できる。
-
-Ret:
-	$rah			（検索結果の）ハッシュリファレンスの配列
-				_count  : count(pkey)
-				xxx_sum : sum('xxx')
-
-	SQL で書けば次のようになる。
-
-SELECT	$group_col,
-	count(pkey) as _count,
-	max($max_col) as "${max_col}_max",
-	sum($sum_col) as "${sum_col}_sum",
-	FROM $table GROUP BY $group_col
-
-	カラム名にテーブル名が含まれる場合、テーブル名は無視されます。
-
-	$DB->select_by_group('score s', { group_by => 'u_pkey', max_cols => 's.point' });
-	SELECT count(pkey) as _count, max(s.point) as point_max FROM score s GROUP BY u_pkey
 
 ################################################################################
 ■関数マニュアル（SELECT以外）

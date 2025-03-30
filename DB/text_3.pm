@@ -701,7 +701,7 @@ sub rebuild_index {
 	my $db = $self->load_index($table);
 	$self->{index_file} = $index_file_orig;
 
-	# load column data files
+	# load row data files
 	my $files = $ROBJ->search_files($dir);
 	my $ext   = $self->{ext};
 	my @files = grep(/^\d+$ext$/, @$files);

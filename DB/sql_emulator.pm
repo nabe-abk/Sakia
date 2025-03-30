@@ -1,6 +1,6 @@
 use strict;
 package Sakia::DB::sql_emulator;
-our $VERSION = '0.10';
+our $VERSION = '0.20';
 ################################################################################
 # constructor
 ################################################################################
@@ -32,7 +32,7 @@ sub sql_emulator {
 	};
 	local($DB->{TRACE})=1 if ($opt->{trace});
 
-	my $result;
+	my @res;
 	foreach my $line (split(/;/, $sql)) {
 		if ($line =~ /^\s*$/) { next; }
 		$line =~ s/^ //;
@@ -44,6 +44,7 @@ sub sql_emulator {
 		if ($cmd eq '\D')       { $cmd='SHOW'; }
 		if ($cmd eq 'DESCRIBE') { $cmd='SHOW'; }
 
+		my $result;
 		if    ($cmd eq 'SELECT') { $result=$self->sql_emu_select($DB); }
 		elsif ($cmd eq 'INSERT') { $self->sql_emu_insert($DB); }
 		elsif ($cmd eq 'UPDATE') { $self->sql_emu_update($DB); }
@@ -60,11 +61,15 @@ sub sql_emulator {
 		else {
 			$self->error('Unknown command: %s', $cmd);
 		}
+
+		if ($result) {
+			push(@res, $result);
+		}
 	}
 
 	$self->restore_string(@$log);
 
-	return ($result, $log);
+	return (\@res, $log);
 }
 
 #-------------------------------------------------------------------------------
@@ -86,7 +91,6 @@ sub sql_emu_select {
 
 	my %h;
 	my @cols;
-	my $group_cols=0;
 	foreach(split(/ ?, ?/, $cols)) {
 		if ($_ eq '*') {
 			push(@cols, '*');
@@ -100,11 +104,11 @@ sub sql_emu_select {
 		}
 		$c =~ s/ //g;
 
-		if ($c =~ /^\w+\(([^\)]*)\)$/i) {	# func(col)
-			$c = $1;
-			$group_cols++;
+		my $x = $c;
+		if ($x =~ /^\w+\(([^\)]*)\)$/i) {	# func(col)
+			$x = $1;
 		}
-		if ($c !~ /^\w+(?:\.(?:\w+|\*))?$/) {
+		if ($x !~ /^\w+(?:\.(?:\w+|\*))?$/) {
 			return $self->error('SELECT colmuns error: %s', $_);
 		}
 		push(@cols, "$c$n");
@@ -132,22 +136,6 @@ sub sql_emu_select {
 
 			my $jt = $self->next_value_is_table_with_name();
 			if (!$jt) { return; }
-
-			#---------------------------------------------
-			# search join table's colmuns from @cols 
-			#---------------------------------------------
-			my $jn = $jt =~ /^\w+ (\w+)$/ ? $1 : $jt;
-			my @jcols;
-			foreach(@cols) {
-				if ($_ !~ /^(\w+)\.(.*)/ || $1 ne $jn) { next; }
-				push(@jcols, $2);
-				$_ = undef;
-			}
-			@cols = grep { defined $_ } @cols;
-
-			#---------------------------------------------
-			# join on
-			#---------------------------------------------
 			if (! $self->next_word_is('ON')) { return; }
 			$w = 'ON';
 
@@ -160,8 +148,7 @@ sub sql_emu_select {
 			push(@$lj, {
 				table	=> $jt,
 				left	=> $1,
-				right	=> $2,
-				cols	=> \@jcols
+				right	=> $2
 			});
 
 		} elsif ($w eq 'WHERE') {
@@ -229,18 +216,7 @@ sub sql_emu_select {
 		$exists{$w}=1;
 	}
 
-	#---------------------------------------------------
-	# group by checker
-	#---------------------------------------------------
-	my $func = 'select';
-	if (exists($h{group_by})) {
-		$func = 'select_by_group';
-
-	} elsif($group_cols) {
-		return $self->error('func() column requires a "GROUP BY": %s', $cols);
-	}
-
-	return $DB->$func($table, \%h);
+	return $DB->select($table, \%h);
 }
 
 #-------------------------------------------------------------------------------

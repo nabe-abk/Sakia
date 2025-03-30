@@ -11,7 +11,7 @@ package Sakia::DB::text;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
 #-------------------------------------------------------------------------------
-our $VERSION = '1.70';
+our $VERSION = '1.80';
 our %IndexCache;
 our $ErrNotFoundCol = 'In "%s" table, not found "%s" column.';
 our $ErrInvalidVal  = 'In "%s" table, invalid value of "%s" column. "%s" is not %s.';
@@ -150,8 +150,16 @@ sub select {
 		}
 	}
 
+	my $g_col = $arg->{group_by};
+	if ($g_col ne '') {
+		my $ci = $self->load_colinfo(\%colinfo, $g_col);
+		if (!$ci) { return; }
+
+		$g_col = $ci->{fullname};
+	}
+
 	my %selinfo;	# select infomation by keys of the returned hash
-	my @selcols;	# select column names
+	my @selcols;	# select column full names
 	#
 	# Ex) SELECt x y FROM tbl t
 	#	$selinfo{y} = 't.x';
@@ -162,11 +170,15 @@ sub select {
 		my %sel;
 		my $ary = ref($arg_cols) ? $arg_cols : [ $arg_cols ];
 		foreach(@$ary) {
+			if ($g_col && $_ =~ /\*$/) {
+				$self->error('SELECT colmun error, not allow with "group by": %s', $_);
+				return [];
+			}
 			if ($_ eq '*') {
 				foreach(keys(%selany)) {
 					my $fn = $colinfo{$_}->{fullname};
 					$sel{$fn}    = 1;
-					$selinfo{$_} = $fn;
+					$selinfo{$_} = { col=>$fn };
 				}
 				next;
 			}
@@ -176,48 +188,65 @@ sub select {
 				$c = $1;
 				$n = $2;
 				if ($n !~ /^[a-z_]/) {
-					$self->error('SELECT illegal colmun name: %s', $_);
+					$self->error('SELECT colmun error, illegal colmun name: %s', $_);
 					return [];
 				}
 			}
 			$c =~ s/\s//g;
 
 			my $func;
-			if ($c =~ /^(\w+)\(([^\)]*)\)$/i) {	# func(col)
+			if ($c =~ /^(\w+)\(([^\)]*)\)$/) {	# func(col)
 				$func = $1;
 				$c    = $2;
+				if ($func !~ /^(?:count|min|max|sum)$/) {
+					$self->error('SELECT colmun error, "%s()" not support: %s', $func, $_);
+					return [];
+				}
+				if (!$g_col) {
+					$self->error('SELECT colmun error, function can only be used with "group by": %s', $_);
+					return [];
+				}
 			}
 			if ($c !~ /^(?:(\w+)\.)?(\w+|\*)$/) {
-				$self->error('SELECT colmuns error: %s', $_);
+				$self->error('SELECT colmun error: %s', $_);
 				return [];
 			}
-			$n ||= $2;
+			$n ||= $func ? "${func}_$2" : $2;
 
 			if ($1 eq '') {
-				my $ci = $colinfo{$2};
-				if (!$ci) {
-					$self->error('SELECT colmun not found: %s', $_);
-					return [];
-				}
-				if ($ci->{dup}) {
-					$self->error('SELECT column name matches multiple table: %s', $_);
-					return [];
-				}
+				my $ci = $self->load_colinfo(\%colinfo, $2);
+				if (!$ci) { return; }
+
 				$c = $ci->{fullname};
 
 			} else {
 				my $t = $names{$1};
 				if (!$t) {
-					$self->error('SELECT colmuns error, table name not found: %s', $_);
+					$self->error('SELECT colmun error, table name not found: %s', $_);
 					return [];
+				}
+				if ($2 eq '*') {
+					my @ary = keys(%{$self->{"$t.cols"}});
+					foreach(@ary) {
+						my $fn = "$1.$_";
+						$sel{$fn}    = 1;
+						$selinfo{$_} = { col=>$fn };
+					}
+					next;
 				}
 				if (!$colinfo{$c}) {
 					$self->error('SELECT colmun not found: %s', $_);
 					return [];
 				}
 			}
+
+			if ($g_col && !$func && $c ne $g_col) {
+				$self->error('SELECT colmun error, not allow with "group by": %s', $_);
+				return [];
+			}
+
 			$sel{$c}     = 1;
-			$selinfo{$n} = $c;
+			$selinfo{$n} = { col=>$c, func=>$func };
 		}
 		@selcols = keys(%sel);
 	}
@@ -317,16 +346,8 @@ sub select {
 	# check column
 	#-----------------------------------------------------------------------
 	my $check_col = sub {
-		my $col= shift;
-		my $ci = $colinfo{$col};
-		if (!$ci) {
-			$self->error('Not found column: %s', $col);
-			return;
-		}
-		if ($ci->{dup}) {
-			$self->error('There are multiple corresponding columns: %s', $col);
-			return;
-		}
+		my $ci = $self->load_colinfo(\%colinfo, shift);
+		if (!$ci) { return; }
 
 		my $t  = $ci->{table};
 		my $tn = $ci->{tname};
@@ -357,17 +378,15 @@ sub select {
 	#-----------------------------------------------------------------------
 	# sort
 	#-----------------------------------------------------------------------
-	my $sort_func = $arg->{sort} && sub {
+	my $arg_sort  = $arg->{sort} && (ref($arg->{sort}) ? $arg->{sort} : [ $arg->{sort} ]);
+	my $sort_func = !$g_col && $arg_sort && sub {
 		my $list = shift;
 
 		my @cond;
-		my $sort = ref($arg->{sort}) ? $arg->{sort} : [ $arg->{sort} ];
-		foreach(@$sort) {
+		foreach(@$arg_sort) {
 			my $c = $_;
 			my $rev = ord($c) == 0x2d;		# '-colname'
-			if ($rev) {
-				$c = substr($c, 1);
-			}
+			if ($rev) { $c = substr($c, 1); }
 
 			my ($ci, $_code, $scolcode) = &$check_col($c);
 			if (!$ci) { return; }			# error exit
@@ -381,7 +400,6 @@ sub select {
 		my $cond = join(' || ', @cond);
 		my $func = "sub { my (\$db$maps_arg_code)=\@_; "
 			 . "return [ sort { $cond } \@\$db ] }";
-		if ($self->{TRACE}) { $func =~ s/\t+\n//g; }
 		$func = $self->eval_and_cache($func);
 
 		return &$func($list, @maps_arg);
@@ -568,9 +586,100 @@ FUNCTION
 	}
 
 	#-----------------------------------------------------------------------
+	# group by
+	#-----------------------------------------------------------------------
+	if ($g_col) {
+		my %funcs = (
+			min => sub {
+				my $x = shift;
+				my $y = shift;
+				if ($x eq '') { return $y; }
+				if ($y eq '') { return $x; }
+				return $x<$y ? $x : $y;
+			},
+			max => sub {
+				my $x = shift;
+				my $y = shift;
+				if ($x eq '') { return $y; }
+				if ($y eq '') { return $x; }
+				return $x>$y ? $x : $y;
+			},
+			sum => sub {
+				my $x = shift;
+				my $y = shift;
+				if ($x eq '') { return $y; }
+				if ($y eq '') { return $x; }
+				return $x+$y;
+			},
+			count => sub {
+				my $x = shift || 0;
+				my $y = shift;
+				if ($y eq '') { return $x; }
+				return $x+1;
+			}
+		);
+
+		my ($gci, $gcolcode) = &$check_col($g_col);
+		my $save_gcol_code = '';
+		my @mapcode;
+		foreach my $n (keys(%selinfo)) {
+			my $si = $selinfo{$n};
+			my ($ci, $colcode) = &$check_col($si->{col});
+			if ($si->{func}) {
+				push(@mapcode, "\$h->{$n}=&{\$f->{$si->{func}}}(\$h->{$n}, $colcode);");
+				next;
+			}
+			$save_gcol_code .= "\$h->{$n}=$colcode;";
+		}
+
+		my $mapcode = join("\n\t\t", @mapcode);
+		my $func = <<FUNCTION;
+sub {
+	my (\$db,\$f$maps_arg_code) = \@_;
+	my \@ary;
+	my \%gh;
+	foreach(\@\$db) {
+		my \$gv = $gcolcode;
+		my \$h  = \$gh{\$gv};
+		if (!\$h) {
+			push(\@ary, \$h = \$gh{\$gv} = {});
+			$save_gcol_code
+		}
+		$mapcode
+	}
+	return \\\@ary;
+}
+FUNCTION
+		$func = $self->eval_and_cache($func);
+		$db = &$func($db, \%funcs, @maps_arg);
+	}
+
+	#-----------------------------------------------------------------------
 	# sort
 	#-----------------------------------------------------------------------
-	if ($sort_func) {
+	if ($g_col && $arg_sort) {
+		my @cond;
+		foreach(@$arg_sort) {
+			my $c = $_;
+			my $rev = ord($c) == 0x2d;		# '-colname'
+			if ($rev) { $c = substr($c, 1); }
+
+			my $si=$selinfo{$c};
+			if (!$si) {
+				$self->error("Not found select colmun name with aggregate: %s", $c);
+				return [];
+			}
+			my $is_str = $si->{func} ? 0 : $colinfo{$si->{col}}->{is_str};
+			my $op     = $is_str ? 'cmp' : '<=>';
+			push(@cond, $rev ? "\$b->{$c}$op\$a->{$c}" : "\$a->{$c}$op\$b->{$c}");
+		}
+
+		my $cond = join(' || ', @cond);
+		my $func = "sub { return [ sort { $cond } \@{(shift)} ] }";
+		$func = $self->eval_and_cache($func);
+		$db = &$func($db);
+
+	} elsif ($sort_func) {
 		$db = &$sort_func($db);
 		if (!$db) { return []; }	# error
 		$sort_func = undef;		# sorted
@@ -594,7 +703,10 @@ FUNCTION
 	#-----------------------------------------------------------------------
 	# make return data
 	#-----------------------------------------------------------------------
-	if (!%join_map && (!ref($arg_cols) && $arg_cols eq '*' || ref($arg_cols) && $#$arg_cols==0 && $arg_cols->[0] eq '*')) {
+	if ($g_col) {
+		# maked
+
+	} elsif (!%join_map && (!ref($arg_cols) && $arg_cols eq '*' || ref($arg_cols) && $#$arg_cols==0 && $arg_cols->[0] eq '*')) {
 		#
 		# single table and load all colmun data
 		# copy all row data
@@ -605,13 +717,18 @@ FUNCTION
 		$db = [ map { my %x=%$_; delete $x{'*'}; \%x } @$db ];
 
 	} else {
-		#
-		# $selinfo{name} = 'col'
+		# join or "as name"
+		#	$selinfo{name} = { col => 'col' }
 		#	-->> select col as name
 		#
 		my @mapcode;
 		foreach my $n (keys(%selinfo)) {
-			my ($ci, $colcode) = &$check_col($selinfo{$n});
+			my $si = $selinfo{$n};
+			my ($ci, $colcode) = &$check_col($si->{col});
+			if ($si->{func} eq 'count') {
+				push(@mapcode, "$n=>($colcode eq '' ? '' : 1)");
+				next;
+			}
 			push(@mapcode, "$n=>$colcode");
 		}
 
@@ -639,6 +756,26 @@ sub parse_table_name {
 	}
 	$tbl =~ s/\W//g;
 	return ($tbl, $tbl);
+}
+
+#-------------------------------------------------------------------------------
+# load colinfo
+#-------------------------------------------------------------------------------
+sub load_colinfo {
+	my $self = shift;
+	my $h    = shift;
+	my $col  = shift;
+
+	my $ci = $h->{$col};
+	if (!$ci) {
+		$self->error('Not found column: %s', $col);
+		return;
+	}
+	if ($ci->{dup}) {
+		$self->error('There are multiple corresponding columns: %s', $col);
+		return;
+	}
+	return $ci;
 }
 
 #-------------------------------------------------------------------------------
@@ -901,4 +1038,3 @@ sub eval_and_cache {
 }
 
 1;
-

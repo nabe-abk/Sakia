@@ -335,21 +335,33 @@ sub sql_console {
 	my $dbh  = $self->{dbh};
 	if (!$self->{admin}) { return; }
 
+	my @str;
+	$sql =~ s/\0//g;
+	$sql =~ s/\s+--.*//g;
+	$sql =~ s!('(?:[^']|'')*')!push(@str, $1), "\0$#str\0"!eg;
+
+	my @result;
 	my @log;
+	foreach(split(/\s*;\s*/, $sql)) {
+		$_ =~ s/\0(\d+)\0/$str[$1]/g;
 
-	my $sth = $dbh->prepare($sql);
-	$sth && $sth->execute();
-	if (!$sth || $dbh->err) {
-		push(@log, split(/\n/, $dbh->errstr));
-		return (undef, \@log);
+		my $sth = $dbh->prepare($_);
+		$sth && $sth->execute();
+		if (!$sth || $dbh->err) {
+			push(@log, split(/\n/, $dbh->errstr));
+			next;
+		}
+		if (0 <= $sth->rows) {
+			push(@log, "rows: " . $sth->rows);
+		}
+		if ($sth->rows) {
+			my $ary = $sth->fetchall_arrayref({});
+			if (@$ary) {
+				push(@result, $ary);
+			}
+		}
 	}
-	push(@log, "Success");
-
-	if (0 <= $sth->rows) {
-		push(@log, "rows: " . $sth->rows);
-	}
-	my $ary = $sth->fetchall_arrayref({});
-	return ($ary, \@log);
+	return (\@result, \@log);
 }
 
 1;

@@ -139,64 +139,6 @@ sub delete_match {
 }
 
 ################################################################################
-# select by group
-################################################################################
-sub select_by_group {
-	my ($self, $table, $h, $w) = @_;
-
-	#-----------------------------------------
-	# parse
-	#-----------------------------------------
-	my ($table, $as)   = $self->parse_table_name($table);
-	my ($ljoin, $jcol) = $self->generate_left_join($h);
-	my ($where, $ary)  = $self->generate_select_where($h);
-	if ($ljoin && $as eq '') { $as=$table; }
-	my $tname = $as ? "$as." : '';
-
-	#-----------------------------------------
-	# select columns
-	#-----------------------------------------
-	my $cols = "count(${tname}pkey) as _count";
-	foreach my $type (qw(sum max min)) {
-		my $x = $h->{"${type}_cols"};
-		if (!$x) { next; }
-
-		my $ary = ref($x) ? $x : [ $x ];
-		foreach(@$ary) {
-			my $c = $_ =~ s/[^\w\.]//rg;
-			my $n = $c =~ s/.*?(\w+)$/$1/r;
-			$cols .= ", $type($c) as ${n}_$type";
-		}
-	}
-
-	#-----------------------------------------
-	# group by
-	#-----------------------------------------
-	my $group_by = '';
-	my $gcol = $h->{group_by} =~ s/[^\w\.]//rg;
-	if ($gcol ne '') {
-		$group_by  = " GROUP BY $gcol";
-		$cols .= ", $gcol";
-	}
-
-	#-----------------------------------------
-	# make SQL
-	#-----------------------------------------
-	my $from = $table . $ljoin;
-	my $sql  = "SELECT $cols FROM $from$where$group_by"
-		 . $self->generate_order_by($h);
-
-	#-----------------------------------------
-	# execute
-	#-----------------------------------------
-	my $sth   = $self->do_sql($sql, @$ary);
-	if (!$sth) {
-		return [];
-	}
-	return $sth->fetchall_arrayref({});
-}
-
-################################################################################
 # transaction
 ################################################################################
 sub begin {

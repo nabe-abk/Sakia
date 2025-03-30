@@ -8,7 +8,7 @@ use Sakia::AutoLoader;
 use Sakia::DB::share;
 use DBI ();
 #-------------------------------------------------------------------------------
-our $VERSION = '1.70';
+our $VERSION = '1.80';
 my %DB_attr = (AutoCommit => 1, RaiseError => 0, PrintError => 0, PrintWarn => 0);
 ################################################################################
 # constructor
@@ -99,35 +99,61 @@ sub find_table {
 # select
 ################################################################################
 sub select {
-	my ($self, $table, $h) = @_;
+	my ($self, $_table, $h) = @_;
 	my $dbh  = $self->{dbh};
 	my $ROBJ = $self->{ROBJ};
 
 	#-----------------------------------------
 	# parse
 	#-----------------------------------------
-	my ($table, $as)   = $self->parse_table_name($table);
-	my ($ljoin, $jcol) = $self->generate_left_join($h);
-	my ($where, $ary)  = $self->generate_select_where($h);
-	if ($ljoin && $as eq '') { $as=$table; }
-	my $tname = $as ? "$as." : '';
+	my $table = $self->parse_table_name($_table);
+	my $ljoin = $self->generate_left_join($h);
+	my ($where, $ary) = $self->generate_select_where($h);
+
+	my $group_by='';
+	my $gcol = $h->{group_by} =~ s/[^\w\.]//rg;
+	if ($gcol ne '') {
+		$group_by  = " GROUP BY $gcol";
+	}
 
 	#-----------------------------------------
 	# select cols
 	#-----------------------------------------
-	my $cols = $tname . '*';
+	my $cols='*';
 	if ($h->{cols}) {
-		my $x = ref($h->{cols}) ? $h->{cols} : [ $h->{cols} ];
-		$cols = join(',', map { $tname . ($_ =~ s/\W//rg) } @$x);
+		$cols='';
+		my $ary = ref($h->{cols}) ? $h->{cols} : [ $h->{cols} ];
+		foreach(@$ary) {
+			my $c = $_;
+			my ($n, $f);
+			if ($c =~ s/^(.*?)\s+(\w+)$//) {		# "col name"
+				$c = $1;
+				$n = $2;
+			}
+			if ($c =~ /^(\w+)\s*\(\s*([^\)]*)\s*\)$/) {	# func(col)
+				$f = $1 =~ tr/A-Z/a-z/r;
+				$c = $2;
+				if ($f !~ /^(?:count|min|max|sum)$/) {
+					$self->error('Colmun format error, "%s()" not support: %s', $f, $_);
+					return [];
+				}
+			}
+			if ($c !~ /^(?:\w+\.)?(\w+|\*)?$/) {		# func(col)
+				$self->error("Column format error: %s", $_);
+				return [];
+			}
+			$cols .= $_ . ($f && !$n ? " ${f}_$1," : ',');
+		}
+		chop($cols);
 	}
 
 	#-----------------------------------------
 	# make SQL
 	#-----------------------------------------
-	my $rows = wantarray ? 'SQL_CALC_FOUND_ROWS ' : '';
-	my $from = $table . $ljoin;
-	my $sql  = "SELECT $rows$cols$jcol FROM $from$where"
-		 . $self->generate_order_by($h);
+	my $rows= wantarray ? 'SQL_CALC_FOUND_ROWS ' : '';
+	my $sql = "SELECT $rows$cols FROM $table"
+		. $ljoin . $where . $group_by
+		. $self->generate_order_by($h);
 
 	#-----------------------------------------
 	# limit and offset
@@ -184,10 +210,9 @@ sub parse_table_name {
 	my $self = shift;
 	my $table= shift;
 	if ($table =~ /^(\w+) +(\w+)$/) {
-		return ("$1 as $2", $2);
+		return "$1 $2";
 	}
-	$table =~ s/\W//g;
-	return ($table, '');
+	return $table =~ s/\W//rg;
 }
 
 #-------------------------------------------------------------------------------
@@ -366,29 +391,20 @@ sub generate_left_join {
 	my ($self, $h) = @_;
 
 	my $lj = $h->{ljoin};
-	if (!$lj) { return ('', ''); }
+	if (!$lj) { return ''; }
 	my $ary = ref($lj) eq 'ARRAY' ? $lj : [ $lj ];
 
 	my $sql='';
-	my @cols;
 	foreach(@$ary) {
-		my ($tbl,$as) = $self->parse_table_name($_->{table});
-		my $l   = $_->{left}  =~ s/[^\w\.]//rg;
-		my $r   = $_->{right} =~ s/[^\w\.]//rg;
+		my $tbl = $self->parse_table_name($_->{table});
+		my $l = $_->{left}  =~ s/[^\w\.]//rg;
+		my $r = $_->{right} =~ s/[^\w\.]//rg;
 		if (!$tbl) { next; }
 
-		my $c = $_->{cols};
-		if ($c) {
-			$as ||= $tbl;
-			push(@cols, map { $_ =~ /^(\w+) +(\w+)$/ ? "$as.$1 as $2" : "$as." . ($_ =~ s/\W//rg) } @$c);
-		}
-		if ($as ne '') { $as = " as $as"; }
 		my $on = ($l && $r) ? "$l=$r" : 'false';
-
 		$sql .= " LEFT JOIN $tbl ON $on";
 	}
-	my $cols = @cols ? join(', ', '', @cols) : '';
-	return ($sql, $cols);
+	return $sql;
 }
 
 1;
