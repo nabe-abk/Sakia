@@ -161,12 +161,14 @@ sub select {
 	my %selinfo;	# select infomation by keys of the returned hash
 	my @selcols;	# select column full names
 	#
-	# Ex) SELECt x y FROM tbl t
-	#	$selinfo{y} = 't.x';
+	# Ex) SELECt x y, sum(x) z FROM tbl t
+	#	$selinfo{y} = { col=>'t.x' };
+	#	$selinfo{z} = { col=>'t.x', func=>'sum' };
 	#	@selcols    = ('t.x');
 	#
-	my $arg_cols = $arg->{cols} // '*';
+	my $arg_cols = $arg->{cols} // ($g_col ? $g_col : '*');
 	if ($arg_cols) {
+		my $exists_func;
 		my %sel;
 		my $ary = ref($arg_cols) ? $arg_cols : [ $arg_cols ];
 		foreach(@$ary) {
@@ -202,10 +204,7 @@ sub select {
 					$self->error('SELECT colmun error, "%s()" not support: %s', $func, $_);
 					return [];
 				}
-				if (!$g_col) {
-					$self->error('SELECT colmun error, function can only be used with "group by": %s', $_);
-					return [];
-				}
+				$exists_func=1;
 			}
 			if ($c !~ /^(?:(\w+)\.)?(\w+|\*)$/) {
 				$self->error('SELECT colmun error: %s', $_);
@@ -249,6 +248,15 @@ sub select {
 			$selinfo{$n} = { col=>$c, func=>$func };
 		}
 		@selcols = keys(%sel);
+
+		if ($exists_func && !$g_col) {
+			foreach(@$ary) {
+				if ($_ =~ /^\w+\s*\(/) { next; }
+				$self->error('SELECT colmun error, can not be specified along with aggregate functions: %s', $_);
+				return [];
+			}
+			$g_col='*';
+		}
 	}
 
 	#-----------------------------------------------------------------------
@@ -619,7 +627,7 @@ FUNCTION
 			}
 		);
 
-		my ($gci, $gcolcode) = &$check_col($g_col);
+		my ($gci, $gcolcode) = $g_col eq '*' ? ({}, "''") : &$check_col($g_col);
 		my $save_gcol_code = '';
 		my @mapcode;
 		foreach my $n (keys(%selinfo)) {

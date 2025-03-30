@@ -119,7 +119,7 @@ sub select {
 	#-----------------------------------------
 	# select cols
 	#-----------------------------------------
-	my $cols='*';
+	my $cols = $gcol ? $gcol : '*';
 	if ($h->{cols}) {
 		$cols='';
 		my $ary = ref($h->{cols}) ? $h->{cols} : [ $h->{cols} ];
@@ -130,7 +130,7 @@ sub select {
 				$c = $1;
 				$n = $2;
 			}
-			if ($c =~ /^(\w+)\s*\(\s*([^\)]*)\s*\)$/) {	# func(col)
+			if ($c =~ /^(\w+)\s*\(\s*([^\)]*?)\s*\)$/) {	# func(col)
 				$f = $1 =~ tr/A-Z/a-z/r;
 				$c = $2;
 				if ($f !~ /^(?:count|min|max|sum)$/) {

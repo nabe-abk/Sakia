@@ -108,10 +108,10 @@ ltext		大きいテキスト(64KB超え)
 	$h{group_by}		GROUP BY をするカラム（1つのみ）
 	$h{cols}->[]		結果として取り出すカラムを指定（スカラ or 配列リファレンス）。
 
-	cols が未指定のときは「*」を指定したとみなされる。
+	cols が未指定のときは「*」を指定したとみなされます。
+	cols が未指定時かつgroup_by指定時は、group_byカラムを指定したとみなされます。
 	あるテーブルの全カラムを指定する場合: 'tbl.*'
 	取得名を指定する場合: 'col var1' --> select col2 as var1
-	group_by指定時、関数も使用可能: 'sum(col) sum_col'
 	使用可能な関数: min(), max(), sum(), count()
 	関数付きカラムの取得名を省略した場合のデフォルト名: min(xxx.pkey) --> min_pkey
 
