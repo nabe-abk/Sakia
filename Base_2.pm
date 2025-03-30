@@ -12,7 +12,7 @@ sub compile {
 	# log for debug
 	#-------------------------------------------------------------
 	my $logfile = $self->{CompilerLog};
-	if ($logfile ne '' && (-d $logfile || $self->mkdir($logfile)) ) {
+	if ($logfile ne '' && (-d $logfile || mkdir($logfile)) ) {
 		my $file = $skel;
 		$file =~ tr|/|-|;
 		$file =~ s/[^\w\-\.~]/_/g;
@@ -592,16 +592,6 @@ sub remove_file {
 ################################################################################
 # Directory functions
 ################################################################################
-sub mkdir {
-	my ($self, $dir) = @_;
-	if (-e $dir) { return -1; }
-	my $r = mkdir( $dir );		# 0:fail 1:Success
-	if (!$r) {
-		$self->error("Failed to make directory: %s", $dir);
-	}
-	return $r;
-}
-
 sub copy_dir {
 	my ($self, $src, $des, $mode) = @_;
 	if (substr($src, -1) ne '/') { $src .= '/'; }
@@ -610,7 +600,10 @@ sub copy_dir {
 }
 sub _copy_dir {		# Recursive func
 	my ($self, $src, $des) = @_;
-	$self->mkdir($des) || return -1;
+	if (!mkdir($des)) {
+		$self->error("Failed to make directory: %s", $des);
+		return -1;
+	}
 	my $files = $self->search_files( $src, {dir=>1, all=>1} );
 	my $error = 0;
 	foreach(@$files) {
@@ -649,9 +642,7 @@ sub get_tmpdir {
 	my $self  = shift;
 	my $dir = $self->{Temp} || $self->{CacheDir} . 'tmp';
 	$dir =~ s|/*$|/|;
-	if (!-d $dir) {
-		$self->mkdir($dir);
-	}
+	if (!-d $dir) { mkdir($dir); }
 	$self->tmpwatch( $dir );
 	return $dir;
 }
@@ -659,9 +650,9 @@ sub get_tmpdir {
 sub open_tmpfile {
 	my $self = shift;
 	my $dir  = $self->get_tmpdir();
-	if (!-w $dir && !$self->mkdir($dir)) {
+	if (!-w $dir && !mkdir($dir)) {
 		$self->error("Can't write temporary directory: %s", $dir);
-		return ;
+		return;
 	}
 
 	my $fh;
