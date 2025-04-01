@@ -82,7 +82,7 @@ sub trace {
 	$sql =~ s/\t/    /g;
 	if ($self->{trace_hook}) { return &{$self->{trace_hook}}($sql); }
 
-	$ROBJ->_debug('['.$self->{DBMS}.'] '.$sql, 1);	## safe
+	$ROBJ->_debug('['.$self->{DBMS}.'] '.$sql);	## safe
 }
 sub error {
 	my $self = shift;
