@@ -1471,7 +1471,7 @@ sub print_tmf {
 
 	# This macro like 'strftime(3)' function.
 	# compatible : %Y %y %m %d %I %H %M %S %w %s %e and %a %p
-	my ($s, $m, $h, $D, $M, $Y, $wd, $yd, $isdst) = localtime($tm);
+	my ($s, $m, $h, $D, $M, $Y, $wd, $yd, $isdst) = ref($tm) ? @$tm : localtime($tm);
 	my %h;
 	$h{s} = $tm;
 	$h{j} = $yd;
