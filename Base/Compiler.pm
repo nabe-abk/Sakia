@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.17';
+our $VERSION = '3.18';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -1389,7 +1389,7 @@ sub p2e_operator {
 		my $at = '';
 		if ($xt eq 'const') {
 			$a  = eval($a);
-			if ($a =~ /[^\-\d\.]/) { $a = $self->into_single_quot($a); }
+			$a = $self->single_quot_if_need($a);
 			if ($a eq '') { $a="''"; }
 			$at = 'const';
 		}
@@ -1409,7 +1409,7 @@ sub p2e_operator {
 	my $at = '';
 	if ($xt eq 'const' && $yt eq 'const') {
 		$a  = eval($a);
-		if ($a =~ /[^\-\d\.]/) { $a = $self->into_single_quot($a); }
+		$a = $self->single_quot_if_need($a);
 		if ($a eq '') { $a="''"; }
 		$at = 'const';
 	}
@@ -1608,6 +1608,7 @@ sub p2e_function {
 		# array (a, b, c, ...) to [a, b, c]
 		# arrayq(a, b, c, ...) to ['a', 'b', 'c']
 		my @ary = $self->get_objects_array($st, $x, $xt);
+		$self->dequote_number(@ary);
 		$x = join(',', @ary);
 		return ("[$x]", 'array');
 	}
@@ -1634,6 +1635,8 @@ sub p2e_function {
 		while(@ary) {
 			my $a=shift(@ary);
 			my $b=shift(@ary) // '';
+			$self->dequote_hashkey($a);
+			$self->dequote_number($b);
 			$x .= "$a=>$b,";
 		}
 		chop($x);
@@ -1645,6 +1648,7 @@ sub p2e_function {
 		# flagq(a, b, c, ...) to {'a'=>1, 'b'=>1, ...}
 		my @ary = $self->get_objects_array($st, $x, $xt);
 		if (@ary) {
+			$self->dequote_hashkey(@ary);
 			$x = "{" . join('=>1,', @ary) . "=>1}";
 		} else {
 			$x='{}';
@@ -2088,7 +2092,9 @@ sub rewrite_block_non_code {
 		$key = $self->rb_squot(\@expbuf, $key);
 		$val = $self->rb_squot(\@expbuf, $val);
 		push(@order, $key);
-		push(@out,  "$key=>$val");
+		# @order needs quote
+		$self->dequote_hashkey($key);
+		push(@out,"$key=>$val");
 	}
 	if ($use_order && $cmd_in_key) {
 		return(0, 'Variables cannot be used as keys in ordered hash: %s', "begin_$type");	## msg
@@ -2107,7 +2113,7 @@ sub rb_squot {
 	my $o = '';
 	while(@ary) {
 		my $x = shift(@ary);
-		if ($x ne '') { $o .= '.' . $self->into_single_quot($x); }
+		if ($x ne '') { $o .= '.' . $self->single_quot_if_need($x); }
 		my $y = shift(@ary);
 		if ($y ne '') {
 			$y = $exp->[$y];
@@ -2174,7 +2180,7 @@ sub post_process {
 			if ($text =~ /^[\s]+$/) {
 				$text = '"' . ($text =~ s/\n/\\n/rg) . '"';
 			} else {
-				$text = $self->into_single_quot($text);
+				$text = $self->single_quot_if_need($text);
 			}
 
 			push(@out, $tab . "$VAR_OUT.=$text;\n");
@@ -2203,13 +2209,34 @@ sub post_process {
 # subroutine
 ################################################################################
 #-------------------------------------------------------------------------------
-# string data into ''
+# dequote number and hashkey
 #-------------------------------------------------------------------------------
-sub into_single_quot {
+sub dequote_number {
 	my $self = shift;
 	foreach(@_) {
-		if ($_ =~ /^[1-9]\d+$/) { next; }	# 1234
-		if ($_ =~ /^\d+\.\d*$/) { next; }	# 12.34
+		if ($_ =~ /^'(0|\-?[1-9]\d{0,17})'$/)     { $_=$1; next; }
+		if (length($_)<19 && /^'(\-?\d+\.\d+)'$/) { $_=$1; next; }
+	}
+	return $_[0];
+}
+
+sub dequote_hashkey {
+	my $self = shift;
+	foreach(@_) {
+		if ($_ =~ /^'(0|\-?[1-9]\d{0,17})'$/)	{ $_=$1; next; }
+		if ($_ =~ /^'([A-Za-z_]\w*)'$/)		{ $_=$1; next; }
+	}
+	return $_[0];
+}
+
+#-------------------------------------------------------------------------------
+# string data into ''
+#-------------------------------------------------------------------------------
+sub single_quot_if_need {
+	my $self = shift;
+	foreach(@_) {
+		if ($_ =~ /^(?:0|\-?[1-9]\d{0,17})$/) { next; }	# 0, 123, -123 
+		if (length($_)<17 && /^\-?\d+\.\d+$/) { next; }
 		$_ =~ s/([\\'])/\\$1/g;
 		$_ = "'$_'";
 	}
