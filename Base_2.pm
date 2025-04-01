@@ -895,8 +895,6 @@ sub _debug {
 	my $self = shift;
 	my $msg  = join(' ', @_);
 	$self->esc_dest($msg);
-	$msg =~ s/\n/<br>/g;
-	$msg =~ s/ /&ensp;/g;
 	my ($pack, $file, $line) = caller(1);
 	push(@{$self->{Debug}}, $msg . "<!-- in $file line $line -->");
 }
