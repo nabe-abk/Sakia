@@ -733,7 +733,7 @@ sub parse_where {
 		# "colname" or "not colname"
 		#-----------------------------------------------------
 		if ($x eq '') {
-			$h->{flag}->{$col} = $not ? 0 : 1;
+			$h->{boolean}->{$col} = $not ? 0 : 1;
 			next;
 		}
 

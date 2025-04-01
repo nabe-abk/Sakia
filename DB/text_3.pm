@@ -9,7 +9,7 @@ our $ErrInvalidVal;
 our %TypeInfo;
 my %TypeInfoAlias = (
 	bigint	=> 'int',
-	boolean	=> 'flag',
+	boolean	=> 'int',
 	ltext	=> 'text',
 	'timestamp(0)' => 'timestamp'
 );
@@ -190,15 +190,15 @@ sub drop_table {
 	if (!-e $dir) { return 1; }	# Not found
 
 	my $files = $ROBJ->search_files($dir);
-	my $flag = 0;
+	my $ret = 0;
 	foreach(@$files) {
-		if (! unlink("$dir$_")) { $flag += 2; }
+		if (! unlink("$dir$_")) { $ret += 2; }
 	}
-	if (!rmdir($dir)) { $flag+=10000; }
+	if (!rmdir($dir)) { $ret+=10000; }
 
 	$self->clear_cache($table);
 
-	return $flag;		# 0 is success
+	return $ret;		# 0 is success
 }
 
 
@@ -749,7 +749,7 @@ sub parse_old_index {
 	if ($ver > 3) {
 		foreach(split(/\t/, shift(@$lines))) { $types{$_}='int';   }	# LINE 05: integer columns
 		foreach(split(/\t/, shift(@$lines))) { $types{$_}='float'; }	# LINE 06: float columns
-		foreach(split(/\t/, shift(@$lines))) { $types{$_}='flag';  }	# LINE 07: flag columns
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='boolean'; }	# LINE 07: boolean columns
 		foreach(split(/\t/, shift(@$lines))) { $types{$_}='text';  }	# LINE 08: string columns
 
 		# LINE 09: UNQUE columns
@@ -758,7 +758,7 @@ sub parse_old_index {
 		$self->{"$table.notnull"} = { map { $_ => 1} split(/\t/, shift(@$lines)) };
 	} else {
 		foreach(split(/\t/, shift(@$lines))) { $types{$_}='int';  }
-		foreach(split(/\t/, shift(@$lines))) { $types{$_}='flag'; }
+		foreach(split(/\t/, shift(@$lines))) { $types{$_}='boolean'; }
 		foreach(@allcols) {
 			if ($types{$_}) { next; }
 			$types{$_} = 'text';	# default type is 'text'

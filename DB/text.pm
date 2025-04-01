@@ -11,7 +11,7 @@ package Sakia::DB::text;
 use Sakia::AutoLoader;
 use Sakia::DB::share;
 #-------------------------------------------------------------------------------
-our $VERSION = '1.80';
+our $VERSION = '1.81';
 our %IndexCache;
 our $ErrNotFoundCol = 'In "%s" table, not found "%s" column.';
 our $ErrInvalidVal  = 'In "%s" table, invalid value of "%s" column. "%s" is not %s.';
@@ -30,9 +30,9 @@ sub check_timestmap {
 }
 
 our %TypeInfo = (
-	int  => { type=>'int',   check=>sub{ my $v=shift; $v eq int($v) } },
-	float=> { type=>'float', check=>sub{ my $v=shift; $v eq ($v+0)  } },
-	flag => { type=>'flag',  check=>sub{ my $v=shift; $v eq '0' || $v eq '1'} },
+	int  => { type=>'int',    check=>sub{ my $v=shift; $v eq int($v) } },
+	float=> { type=>'float',  check=>sub{ my $v=shift; $v eq ($v+0)  } },
+	boolean=>{type=>'boolean',check=>sub{ my $v=shift; $v eq '0' || $v eq '1'} },
 	text => { type=>'text', is_str=>1, check=> sub { 1; } },
 	date => { type=>'date', is_str=>1, check=> sub {
 		$_[0] = &check_timestmap('%04d-%02d-%02d', $_[0])
@@ -439,7 +439,6 @@ sub select {
 		{ key => 'max', num => '<=', str => 'le' },
 		{ key => 'gt',  num => '>',  str => 'gt' },
 		{ key => 'lt',  num => '<',  str => 'lt' },
-		{ key => 'flag',    num => '==', flag=>1 },
 		{ key => 'boolean', num => '==', flag=>1 },
 		{ key => 'is_null',   is => "eq''" },
 		{ key => 'not_null',  is => "ne''" }
@@ -464,7 +463,7 @@ sub select {
 			}
 
 			if ($cn->{flag}) {
-				if ($ci->{type} ne 'flag') {
+				if ($ci->{type} ne 'boolean') {
 					$self->error('The "%s" column is not boolean: %s', $_, $ci->{type});
 					$err=1;
 					next;

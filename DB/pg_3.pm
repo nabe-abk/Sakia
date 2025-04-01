@@ -78,7 +78,6 @@ sub parse_column {
 	if    ($t eq 'int')	{ $sql .= "$col INT";     }
 	elsif ($t eq 'bigint')	{ $sql .= "$col BIGINT";  }
 	elsif ($t eq 'float')	{ $sql .= "$col FLOAT";   }
-	elsif ($t eq 'flag')	{ $sql .= "$col BOOLEAN"; }
 	elsif ($t eq 'boolean')	{ $sql .= "$col BOOLEAN"; }
 	elsif ($t eq 'text')	{ $sql .= "$col TEXT";    }
 	elsif ($t eq 'ltext')	{ $sql .= "$col TEXT";    }

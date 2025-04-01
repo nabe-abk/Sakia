@@ -1,5 +1,5 @@
 ################################################################################
-データベースシステム Ver1.80			Copyright (C)2025 nabe@abk
+データベースシステム Ver1.81			Copyright (C)2025 nabe@abk
 ################################################################################
 [TAB=8]
 
@@ -57,8 +57,7 @@ DB.index_file	インデックスファイル名標準 ("#index.dat")
 int		整数（32bit）
 bigint		整数（64bit）
 float		小数
-flag		フラグ(0 or 1)
-boolean		フラグの別名
+boolean		フラグ(0 or 1 or NULL)
 date		日付型。'YYYY-MM-DD'
 timestamp	タイムスタンプ型。'YYYY-MM-DD hh:mm:ss'（精度「秒」）
 text		テキスト
@@ -85,8 +84,7 @@ ltext		大きいテキスト(64KB超え)
 	$h{min}->{<col>}	値比較（以上）
 	$h{lt}->{<col>}		値比較（指定した値より小さい）
 	$h{gt}->{<col>}		値比較（指定した値より大きい）
-	$h{flag}->{<col>}	フラグ検索 col と論理（1 / 0）
-	$h{boolean}->{<col>}	flag の別名。両方指定した場合 $h{flag} が優先される。
+	$h{boolean}->{<col>}	フラグ検索 col と論理（1 / 0）
 
 	$h{is_null}		IS NULL検索をするカラム（配列リファレンス）
 	$h{not_null}		IS NOT NULL検索をするカラム（配列リファレンス）
@@ -369,8 +367,8 @@ Ret:
 		login_tm	bigint				# last login time (UTC)
 		fail_c		int NOT NULL DEFAULT 0		# login fail count (clear on success)
 		fail_tm		bigint				# last failed time (UTC)
-		disable		flag NOT NULL 			# account is disabled
-		isadmin		flag NOT NULL			# account is admin
+		disable		boolean NOT NULL		# account is disabled
+		isadmin		boolean NOT NULL		# account is admin
 
 		INDEX		id
 		INDEX		email

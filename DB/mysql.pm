@@ -8,7 +8,7 @@ use Sakia::AutoLoader;
 use Sakia::DB::share;
 use DBI ();
 #-------------------------------------------------------------------------------
-our $VERSION = '1.80';
+our $VERSION = '1.81';
 my %DB_attr = (AutoCommit => 1, RaiseError => 0, PrintError => 0, PrintWarn => 0);
 ################################################################################
 # constructor
@@ -297,11 +297,10 @@ sub generate_select_where {
 		$where .= " AND $k<?";
 		push(@ary, $h->{lt}->{$_});
 	}
-	my $flags = $h->{flag} || $h->{boolean};
-	foreach(keys(%$flags)) {
+	foreach(keys(%{ $h->{boolean} })) {
 		my $k = $_;
 		$k =~ s/[^\w\.]//g;
-		$where .= " AND " . ($flags->{$_} ? '' : 'not ') . $k;
+		$where .= " AND " . ($h->{boolean}->{$_} ? '' : 'not ') . $k;
 	}
 	foreach(@{ $h->{is_null} }) {
 		$_ =~ s/[^\w\.]//g;
