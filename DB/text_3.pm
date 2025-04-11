@@ -9,7 +9,6 @@ our $ErrInvalidVal;
 our %TypeInfo;
 my %TypeInfoAlias = (
 	bigint	=> 'int',
-	boolean	=> 'int',
 	ltext	=> 'text',
 	'timestamp(0)' => 'timestamp'
 );
