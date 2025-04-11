@@ -1,11 +1,11 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Mail Parser module
-#							(C)2006-2024 nabe@abk
+#							(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 #
 package Sakia::Net::MailParser;
-our $VERSION = '1.20';
+our $VERSION = '1.21';
 use Encode;
 ################################################################################
 # base
@@ -250,7 +250,7 @@ sub parse_mail_header {
 		$x =~ s/[\r\n]//g;
 		if ($x =~ /^[ \t]+.*/) {
 			# RFC 2822 FWS / RFC 2234 WSP
-			$v .= ($n =~ /^(?:Received|DKIM-.*)$/i ? "\n" : '') . $x;
+			$v .= "\n" . $x;
 			next;
 		} 
 		if (defined $n) {
@@ -353,7 +353,7 @@ sub decode_header_line {
 		"\x00$#buf\x00";
 	!eg;
 
-	$line =~ s/\x00[\t ]+\x00/\x00\x00/g;	# RFC 2047
+	$line =~ s/\x00\s+\x00/\x00\x00/g;	# RFC 2047
 	$line =~ s/\x00(\d+)\x00/$buf[$1]/g;	# recovery buffer
 	return $line;
 }
