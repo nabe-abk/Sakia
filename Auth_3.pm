@@ -379,7 +379,7 @@ sub create_user_table {
 	$DB->begin();
 
 	$DB->create_table_wrapper($table, <<INFO);
-		pkey		serial PRIMARY KEY		# not change
+		pkey		serial PRIMARY KEY
 
 		id		text NOT NULL UNIQUE
 		name		text NOT NULL			# display name
@@ -399,7 +399,7 @@ sub create_user_table {
 INFO
 
 	$DB->create_table_wrapper("${table}_sid", <<INFO);
-		pkey		serial PRIMARY KEY		# not change
+		pkey		serial PRIMARY KEY
 
 		id		text NOT NULL ref(${table}.id)
 		sid		text NOT NULL
@@ -411,16 +411,17 @@ INFO
 INFO
 
 	$DB->create_table_wrapper("${table}_log", <<INFO);
-		pkey		serial PRIMARY KEY		# not change
+		pkey		serial PRIMARY KEY
 
-		id		text		# Do not set NOT NULL, to record errors where ID is not entered.
+		# "id" must not be set to NOT NULL in order to log an error if no ID is entered.
+		id		text		# TAG escaped
 		type		text NOT NULL
 		msg		text
 		tm		timestamp(0) NOT NULL DEFAULT CURRENT_TIMESTAMP
 
-		ip		text
-		host		text
-		agent		text
+		ip		text		# TAG escaped
+		host		text		# TAG escaped
+		agent		text		# TAG escaped
 
 		INDEX		id
 		INDEX		type

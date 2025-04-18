@@ -214,15 +214,18 @@ sub save_log {
 	my $DB   = $self->{DB};
 	my $ROBJ = $self->{ROBJ};
 
-	my $h = {id => $id, type => $type, msg => $msg};
-	$h->{agent} = $ENV{HTTP_USER_AGENT};
-	$h->{ip}    = $ENV{REMOTE_ADDR};
-	$h->{host}  = $ENV{REMOTE_HOST};
-
+	my $h = {
+		id	=> $id,
+		agent	=> $ENV{HTTP_USER_AGENT},
+		ip	=> $ENV{REMOTE_ADDR},
+		host	=> $ENV{REMOTE_HOST}
+	};
 	foreach(keys(%$h)) {
 		$h->{$_} = substr($h->{$_}, 0, $self->{log_text_max});
 		$ROBJ->esc_dest($h->{$_});
 	}
+	$h->{type} = $type;
+	$h->{msg}  = $msg;
 
 	$DB->insert($self->{table} . '_log', $h);
 }
