@@ -1,12 +1,12 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Excel file manipulation
-#							(C)2020-2024 nabe@abk
+#							(C)2020-2025 nabe@abk
 #-------------------------------------------------------------------------------
 # Use commands: rm zip unzip and shell
 #
 package Sakia::Util::Excel;
-our $VERSION = '1.27';
+our $VERSION = '1.28';
 #-------------------------------------------------------------------------------
 use Fcntl;
 ## mskip-all: for message checker
@@ -40,7 +40,7 @@ sub new {
 		my $ext;
 		if ($self->{DEBUG}) {
 			$ext = '0';
-			system("rm -rf '$wd.$ext'");
+			$self->rmdir("$wd.$ext");
 		} else {
 			foreach(1..100) {
 				$ext = int(rand(100000000));
@@ -77,7 +77,7 @@ sub DESTROY {
 	my $wd   = $self->{wd};
 
 	if ($self->{DEBUG} || !$wd || !-d $wd) { last; }
-	system("rm -rf '$wd'");
+	$self->rmdir($wd);
 }
 
 ################################################################################
@@ -551,9 +551,10 @@ sub replace_cells($$) {
 			!eg;
 
 			# $xxx?yyy$ if (xxx) 'yyy' else ''
+			# $xxx?y:z$ if (xxx) 'y'   else 'z'
 			# $xxx!yyy$ if (xxx) ''    else 'yyy'
 			# $xxx,yyy$ if (xxx) 'xxx' else 'yyy'
-			   if ($symbol eq '?') { $v = $v ne '' ? $default : ''; }
+			   if ($symbol eq '?') { $v = $v ne '' ? $default =~ s/:.*//sr : $default =~ s/^.*?://sr; }
 			elsif ($symbol eq '!') { $v = $v eq '' ? $default : ''; }
 			elsif ($symbol eq ',') { $v = $v ne '' ? $v       : $default; }
 
@@ -659,7 +660,7 @@ sub rmdir {
 	my $self = shift;
 	my $dir  = shift;
 	$dir =~ s/[\x00-\x1f\\"'\$]//g;
-	system("rm -rf '$dir'");
+	system('rm', '-rf', $dir);
 }
 
 #-------------------------------------------------------------------------------
@@ -668,6 +669,9 @@ sub rmdir {
 sub load_file {
 	my $self = shift;
 	my $file = shift;
+	if ($file =~ m|\.\./|) {		# safety
+		return '';
+	}
 	$file = $self->{wd} . '/' . $file;
 
 	my $fh;
