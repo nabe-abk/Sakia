@@ -554,7 +554,7 @@ sub replace_cells($$) {
 			# $xxx?y:z$ if (xxx) 'y'   else 'z'
 			# $xxx!yyy$ if (xxx) ''    else 'yyy'
 			# $xxx,yyy$ if (xxx) 'xxx' else 'yyy'
-			   if ($symbol eq '?') { $v = $v ne '' ? $default =~ s/:.*//sr : $default =~ s/^.*?://sr; }
+			   if ($symbol eq '?') { $v = $v ne '' ? $default =~ s/:.*//sr : ($v =~ /:/ ? $default =~ s/^.*?://sr : ''); }
 			elsif ($symbol eq '!') { $v = $v eq '' ? $default : ''; }
 			elsif ($symbol eq ',') { $v = $v ne '' ? $v       : $default; }
 
