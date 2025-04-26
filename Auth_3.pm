@@ -396,6 +396,7 @@ sub create_user_table {
 		INDEX		id
 		INDEX		email
 		INDEX		isadmin
+		INDEX_TDB	name
 INFO
 
 	$DB->create_table_wrapper("${table}_sid", <<INFO);
