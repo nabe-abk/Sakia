@@ -397,8 +397,7 @@ sub __call {
 	if (!$cache->{executable}) {
 		my $error;
 		foreach (@$arybuf) {
-			my $X = $_;
-			eval "\$_ = $X";
+			$_ = eval $_;
 			if ($@) { $self->error_from($file, "[perl-compiler] $@"); $error=1; }	## mskip
 		}
 		if ($error) { return; }
