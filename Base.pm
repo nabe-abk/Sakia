@@ -1021,17 +1021,11 @@ sub clear_error {
 sub make_call_from {
 	my $self = shift;
 	my @froms;
-	my $prev='';
 	my $i=2;
 	while(1) {
 		my ($pack, $file, $line) = caller($i++);
 		$file = substr($file, rindex($file, '/') +1);
-		if ($file eq $prev) {
-			push(@froms, $line);
-		} else {
-			push(@froms, "$file line $line");
-			$prev = $file;
-		}
+		push(@froms, "$file $line");
 		if (!($pack eq __PACKAGE__ || $pack =~ /::DB::/) || $i>9) { last; }
 	}
 	my $from = pop(@froms);
