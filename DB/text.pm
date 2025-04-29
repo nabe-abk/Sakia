@@ -532,6 +532,13 @@ FUNCTION
 		my $match = $arg->{search_match} || [];
 		my $equal = $arg->{search_equal} || [];
 
+		my %colcodes;
+		foreach(@$cols, @$match, @$equal) {
+			my ($ci, $colcode) = &$check_col($_);
+			if (!$ci) { $err=1; next; }
+			$colcodes{$_} = $colcode;
+		}
+
 		foreach(@$s_words) {
 			if ($_ eq '') { next; }
 			my $x = $_ =~ s/([\\\"])/\\$1/rg;
@@ -539,13 +546,13 @@ FUNCTION
 
 			my @ary;
 			foreach (@$equal) {
-				push(@ary, "\$_->{$_} eq \"$x\"");
+				push(@ary, "$colcodes{$_} eq \"$x\"");
 			}
 			foreach (@$cols) {
-				push(@ary, "\$_->{$_} =~ /$r/i");
+				push(@ary, "$colcodes{$_} =~ /$r/i");
 			}
 			foreach (@$match) {
-				push(@ary, "\$_->{$_} =~ /^$r\$/i");
+				push(@ary, "$colcodes{$_} =~ /^$r\$/i");
 			}
 			push(@cond, '(' . join(' || ', @ary) . ')');
 		}
@@ -558,17 +565,18 @@ FUNCTION
 
 			my @ary;
 			foreach (@$equal) {
-				push(@ary, "\$_->{$_} ne \"$x\"");
+				push(@ary, "$colcodes{$_} ne \"$x\"");
 			}
 			foreach (@$cols) {
-				push(@ary, "\$_->{$_} !~ /$r/i");
+				push(@ary, "$colcodes{$_} !~ /$r/i");
 			}
 			foreach (@$match) {
-				push(@ary, "\$_->{$_} !~ /^$r\$/i");
+				push(@ary, "$colcodes{$_} !~ /^$r\$/i");
 			}
 			push(@cond, join(' && ', @ary));
 		}
 	}
+	if ($err) { return []; }
 	#
 	# Execute text search
 	#
@@ -1035,8 +1043,7 @@ sub eval_and_cache {
 	if ($self->{TRACE}) { $self->trace('[eval] ' . $functext); }
 
 	# function compile
-	my $func;
-	eval "\$func=$functext";
+	my $func = eval $functext;
 	if ($@) {
 		my ($pack, $file, $line) = caller();
 		die "[$self->{DBMS}] in eval_and_cache() $@ (from $file at $line)";

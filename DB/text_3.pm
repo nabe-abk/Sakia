@@ -251,7 +251,7 @@ sub add_column {
 
 	if ($rows) {
 		my $de  = $self->{"$table.default"}->{$col};
-		my $val = $de eq '' ? '' : (ord($de)==0x23 ? substr($de,1) : $self->load_sql_context($table, $col, $de));
+		my $val = $de eq '' ? '' : (ord($de)==0x23 ? substr($de,1) : $self->load_sql_context($de));
 
 		# add column from all row data
 		my $all = $self->load_allrow($table);
@@ -552,7 +552,7 @@ sub check_default_value {
 	}
 
 	if ($sqlv ne '') {
-		my $v = $self->load_sql_context($table, $col, $sqlv);
+		my $v = $self->check_sql_context($table, $col, $sqlv);
 		if (!defined $v) {
 			return;
 		}

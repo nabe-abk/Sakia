@@ -188,8 +188,7 @@ sub update_match {
 		my $isnull = @cond ? '(' . join('||', @cond) . ") && return; " : '';
 		my $functext = "sub {my \$h=shift;$isnull return $v;}";
 		if ($self->{TRACE}) { $self->trace('[eval] ' . $functext); }
-		my $func;
-		eval "\$func=$functext";
+		my $func = eval $functext;
 		if ($@) {
 			$self->error("expression error. table=$table, $@");
 			return 0;
@@ -652,6 +651,7 @@ sub load_and_generate_where {
 		if (! $info) {
 			$self->error($ErrNotFoundCol, $table, $col);
 			$err=1;
+			next;
 		}
 		if (! $idx->{$col}) { $load_all=1; }	# need row file data
 
@@ -659,7 +659,10 @@ sub load_and_generate_where {
 		# check value
 		#
 		$val = $self->check_value_for_match($table, $col, $val, $info);
-		if (!defined $val) { $err=1; }
+		if (!defined $val) {
+			$err=1;
+			next;
+		}
 
 		#
 		# generate function
