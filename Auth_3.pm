@@ -79,7 +79,7 @@ sub delete_user {
 	}
 	if ($DB->commit()) {
 		$DB->rollback();
-		return { ret=>21, msg => '[Auth] DB Internal error' };
+		return { ret=>21, msg => '[Auth] DB internal error' };
 	}
 
 	foreach(@$del) {
