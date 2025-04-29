@@ -344,7 +344,7 @@ sub call {
 sub _call {	# with file path
 	my $self = shift;
 	my $file = shift;
-	return $self->__call($file, undef, undef, @_);
+	return $self->__call($file, $file, undef, @_);
 }
 
 #-------------------------------------------------------------------------------
