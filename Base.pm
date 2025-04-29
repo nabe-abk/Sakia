@@ -858,13 +858,8 @@ sub get_cookie {
 			$h{$key} = $val;
 
 		} else {		# array or hash
-			my ($flag, @ary) = split(/\0/, substr($val,1));
-			$flag = ord($flag);
-			if ($flag == 1) {	# array
-				$h{$key} = \@ary;
-			} elsif ($flag == 2) {	# hash
-				$h{$key} = { my %x = @ary };
-			}
+			my ($f, @ary) = split(/\0/, substr($val,1));
+			$h{$key} = ord($f)==1 ? \@ary : { @ary };
 		}
 	}
 	return ($self->{Cookie} = \%h);
