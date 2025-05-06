@@ -345,7 +345,7 @@ sub select {
 	}
 
 	my $limit_check_code='';
-	if (!wantarray && $limit && $limit < $#$db+1) {		# wantarray is require hits
+	if (!$g_col && !wantarray && $limit && $limit < $#$db+1) {	# wantarray is require hits
 		my $x = $offset + $limit-1;
 		$limit_check_code = "if (\$#ary >= $x) { last; }";
 	}
