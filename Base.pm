@@ -854,10 +854,9 @@ sub get_cookie {
 	foreach (split(/; */, $ENV{HTTP_COOKIE})) {
 		my ($key, $val) = split('=', $_, 2);
 		$val =~ s/%([0-9A-Fa-f][0-9A-Fa-f])/chr(hex($1))/eg;
-		if (ord($val)) {	# start char isn't 0x00
+		if ($val eq '' || ord($val)) {	# start char isn't 0x00
 			$h{$key} = $val;
-
-		} else {		# array or hash
+		} else {			# array or hash
 			my ($f, @ary) = split(/\0/, substr($val,1));
 			$h{$key} = ord($f)==1 ? \@ary : { @ary };
 		}
