@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.18';
+our $VERSION = '3.19';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -163,7 +163,7 @@ my %InlineIf = map { $_ => 1} qw(
 	ifset_header ifset_lastmodified
 	ifset_content_type ifset_status
 
-	ifnext iflast ifreturn ifumask ifprint
+	ifnext iflast ifreturn ifumask ifprint ifinto
 );
 
 #///////////////////////////////////////////////////////////////////////////////
