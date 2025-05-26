@@ -263,7 +263,7 @@ sub _read_multipart_form {
 sub form_err {
 	my $self = shift;
 	if (!@_) { return $self->{FormErr}; }
-	my $name = shift;
+	my $name = shift // '';
 	my $msg  = $self->translate(@_);
 	my $h = $self->{FormErr} ||= { _order => [] };
 	if (!exists($h->{$name})) {
