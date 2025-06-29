@@ -1,13 +1,13 @@
 #!/usr/bin/perl
 use 5.14.0;
 use strict;
-our $VERSION  = '1.25';
+our $VERSION  = '1.26';
 our $SPEC_VER = '1.12';	# specification version for compatibility
 ################################################################################
 # Sakia HTTP Server
-#					Copyright (C)2019-2024 nabe@abk
+#					Copyright (C)2019-2025 nabe@abk
 ################################################################################
-# Last Update : 2024/06/08
+# Last Update : 2025-06-29
 #
 BEGIN {
 	my $path = $0;
@@ -54,7 +54,7 @@ my $DEAMONS   = 10;
 my $KEEPALIVE = 1;
 my $BUFSIZE_u = '1M';	# 1MB
 my $BUFSIZE;		# byte / set from $BUFSIZE_u
-my $MIME_FILE = '/etc/mime.types';
+my $MIME_FILE;
 my $INDEX     = 'index.html';
 my $PID;
 my $R_BITS;	# select socket bits
@@ -76,21 +76,29 @@ if ($IsWindows) {
 # Web Server data
 #-------------------------------------------------------------------------------
 my %DENY_DIRS;
-my %MIME_TYPE = ( 
-	html => 'text/html',
-	htm  => 'text/html',
-	text => 'text/plain',
-	txt  => 'text/plain',
-	css  => 'text/css',
-	js   => 'application/javascript',
-	json => 'application/json',
-	xml  => 'application/xml',
-	png  => 'image/png',
-	jpg  => 'image/jpeg',
-	jpeg => 'image/jpeg',
-	gif  => 'image/gif',
-	ico  => 'image/vnd.microsoft.icon'
-);
+my %MIME_TYPE;
+my $MIME_DEFAULT=<<'MIME';
+text/html		html htm
+text/plain		txt text
+text/css		css
+application/javascript	js mjs
+application/json	json
+application/xml		xml
+application/pdf		pdf
+image/png		png
+image/gif		gif
+image/jpeg		jpeg jpg
+image/webp		webp
+image/vnd.microsoft.icon ico
+audio/mpeg		mp3
+audio/mp4		m4a
+audio/x-wav		wav
+audio/ogg		oga ogg
+video/webm		webm
+video/mp4		mp4 mpg4 m4v
+video/ogg		ogv
+video/x-matroska	mpv mkv
+MIME
 
 #-------------------------------------------------------------------------------
 # for RFC date
@@ -219,7 +227,7 @@ Available options are:
   -t timeout	connection timeout second (default:3, min:0.001)
   -d daemons	start daemons (default:10, min:1)
   -m max_req	maximum cgi requests per daemon (default:10000, min:100)
-  -e mime_file	load mime types file name (default: /etc/mime.types)
+  -e mime_file	load MIME types file (default: info/mime.types and /etc/mime.types)
   -c  fs_code	set file system's character code (default is auto)
   -cs sys_code	set cgi  system's character code (default: UTF-8)
   -b bufsize	buffer size [KB] (default:1024 = 1M, min:64)
@@ -335,27 +343,36 @@ print(
 #-------------------------------------------------------------------------------
 # load mime types
 #-------------------------------------------------------------------------------
-if ($MIME_FILE && -e $MIME_FILE) {
-	print "\tLoad mime types: $MIME_FILE ";
-	my $r = sysopen(my $fh, $MIME_FILE, O_RDONLY);
-	if (!$r) {
-		print "(error!)\n";
-	} else {
+if (1) {
+	my @lines = split(/\n/, $MIME_DEFAULT);
+	my $load;
 
-		my $c=0;
-		while(<$fh>) {
-			chomp($_);
-			$_ =~ s/#.*//;
-			my ($type, @ary) = split(/\s+/, $_);
-			if ($type eq '' || !@ary) { next; }
-			foreach(@ary) {
-				$MIME_TYPE{$_} = $type;
-				$c++;
-			}
+	$MIME_FILE ||= -r 'info/mime.types' ? 'info/mime.types' : '';
+	$MIME_FILE ||= -r '/etc/mime.types' ? '/etc/mime.types' : '';
+
+	if ($MIME_FILE) {
+		print "\tLoad MIME types: $MIME_FILE ";
+		my $r = sysopen(my $fh, $MIME_FILE, O_RDONLY);
+		if (!$r) {
+			print "-> load error!\n";
+		} else {
+			@lines = <$fh>;
+			$load  = 1;
 		}
-		print "(load $c extensions)\n";
+		close($fh)
 	}
-	close($fh);
+	my $c=0;
+	foreach(@lines) {
+		chomp($_);
+		$_ =~ s/[\r#].*//;
+		my ($type, @ary) = split(/\s+/, $_);
+		if ($type eq '' || !@ary) { next; }
+		foreach(@ary) {
+			$MIME_TYPE{$_} = $type;
+			$c++;
+		}
+	}
+	$load && print "-> load $c extensions\n";
 }
 
 #-------------------------------------------------------------------------------
