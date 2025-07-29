@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.19';
+our $VERSION = '3.20';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -304,7 +304,7 @@ $OPR{'<<='}=  0x21;
 $OPR{'>>='}=  0x21;
 $OPR{'&&='}=  0x21;
 $OPR{'||='}=  0x21;
-$OPR{'?'}  =  0x30;	# not use
+$OPR{'?'}  =  0x30;
 $OPR{'..'} =  0x40;
 $OPR{'||'} =  0x50; $OPR_formal{'||'}  = ' || ';	# for readability
 $OPR{'&&'} =  0x60; $OPR_formal{'&&'}  = ' && ';	#
@@ -1585,7 +1585,7 @@ sub p2e_function {
 
 		if ($y eq 'if') {
 			if ($#arg==1 || $#arg==2) {
-				&$parentheses($OPR{'?'});	# <<:higher op / vv: lower op
+				&$parentheses($OPR{'?'} +1);	# +1 for adding parentheses in equal cases.
 				my $else = $#arg==2 ? $arg[2] : 'undef';
 				return ("$arg[0] ? $arg[1] : $else", '', $OPR{'?'});
 			}
@@ -1742,7 +1742,7 @@ sub p2e_function {
 		}
 		$func =~ s/#(\d+)/$arg[$1]/g;
 		$func =~ s/%(\d+)/$par[$1]/eg;
-		return ($func, $OPR{$h->{min}} || OPL_max);
+		return ($func, "*", $OPR{$h->{min}} || OPL_max);
 	}
 
 	#-----------------------------------------------------------------------
