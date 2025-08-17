@@ -25,9 +25,7 @@ sub compile {
 	#-------------------------------------------------------------
 	if ($cache_file) { unlink($cache_file); }
 
-	my $c = $self->loadpm('Base::Compiler' . $self->{CompilerVer});
-	$c->{default_pragma} = $self->{DefaultPragma};
-
+	my $c     = $self->loadpm('Base::Compiler' . $self->{CompilerVer});
 	my $lines = $self->fread_lines($file);
 	my ($errors, $arybuf) = $c->compile($lines, $skel, $logfile);
 	if ($errors) {

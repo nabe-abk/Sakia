@@ -380,7 +380,7 @@ sub preprocessor {
 
 	my $P      = $st->{pragma} = {};
 	my $strbuf = $st->{strbuf} = [];	# string buffer
-	my $p_def  = defined($self->{default_pragma}) ? $self->{default_pragma} : $DEFAULT_PRAGMA;
+	my $p_def  = $DEFAULT_PRAGMA;
 	unshift(@$lines, sprintf("<\@%x>\n", $p_def));
 
 	my $prev_cmd_only = 0;	# The previous line is a command only
