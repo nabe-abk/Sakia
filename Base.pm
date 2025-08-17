@@ -384,7 +384,7 @@ sub __call {
 	#-------------------------------------------------------------
 	# compile file to perl
 	#-------------------------------------------------------------
-	$cache = $cache || {
+	$cache = $cache->{arybuf} || {
 		arybuf		=> $self->compile($cache_file, $file, $skel, $file_tm),
 		file_tm		=> $file_tm,
 		compiler_tm	=> $com_tm
