@@ -369,10 +369,10 @@ sub __call {
 	# load from cache
 	#-------------------------------------------------------------
 	my $com_tm = $self->{CompilerTM} ||= $self->get_lastmodified( 'lib/Sakia/Base/Compiler' . $self->{CompilerVer} . '.pm' );
-	my $cache  = $SkelCache{$file} || {};
+	my $cache  = $SkelCache{$file};
 
 	# load from cache file
-	if ($cache_file && ($cache->{file_tm} != $file_tm || $cache->{compiler_tm} != $com_tm)) {
+	if ($cache_file && $cache && ($cache->{file_tm} != $file_tm || $cache->{compiler_tm} != $com_tm)) {
 		$cache = $self->load_cache($cache_file);
 
 		if (!$cache || $cache->{file_tm} != $file_tm || $cache->{compiler_tm} != $com_tm) {
@@ -384,7 +384,7 @@ sub __call {
 	#-------------------------------------------------------------
 	# compile file to perl
 	#-------------------------------------------------------------
-	$cache = $cache->{arybuf} || {
+	$cache = $cache || {
 		arybuf		=> $self->compile($cache_file, $file, $skel, $file_tm),
 		file_tm		=> $file_tm,
 		compiler_tm	=> $com_tm
