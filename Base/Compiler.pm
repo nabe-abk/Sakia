@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.20';
+our $VERSION = '3.21';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -2072,14 +2072,13 @@ sub rewrite_block_non_code {
 	my $use_order = $type eq 'hash_order';
 	my $cmd_in_key;
 	foreach(@buf) {
-		if ($_ =~ /^\s*$/) { next; }
+		$_ =~ s/^\s+//;
+		$_ =~ s/\s+$//;
+		if ($_ eq '') { next; }
 
-		if ($_ !~ /^(.*?)\s*=\s*(.*)/) {
-			$self->error_from($st->{line}, 'Illegal hash format: %s (in %s)', $_, "begin_$type");
-			next;
-		}
+		$_ =~ /^(.*?)\s*(=\s*(.*))?$/;
 		my $key = $1;
-		my $val = $2;
+		my $val = $2 ? $3 : 1;
 		if ($key eq '_order' && $val) { $use_order=$val; next; }
 
 		if (exists($h{$key})) {
