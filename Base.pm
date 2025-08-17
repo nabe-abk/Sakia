@@ -358,7 +358,7 @@ sub __call {
 	my $level= shift;
 	my $file_tm = ($StatCache{$file} ||= [ stat($file) ])->[9];
 
-	my $cache_file = $self->{CacheDir} && $self->{CacheDir} . ($file =~ s/([^\w\.\#\x80-\xff])/'%' . unpack('H2', $1)/reg) . '.cache';
+	my $cache_file = $self->{CacheDir} && $self->{CacheDir} . ($file =~ s/([^\w\.\-\#\x80-\xff])/'%' . unpack('H2', $1)/reg) . '.cache';
 	if (!$file_tm) {
 		if ($cache_file) { unlink($cache_file); }
 		$self->error('%s() failed. File not found: %s', '__call', $file);
