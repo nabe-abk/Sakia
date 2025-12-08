@@ -1220,7 +1220,7 @@ sub flock {
 #
 sub search_files {
 	my $self = shift;
-	my $dir  = shift;
+	my $dir  = $_[0] . (substr(shift, -1) eq '/' ? '' : '/');
 	my $opt  = shift || {};
 	$opt->{dir} ||= $opt->{dir_only};
 
