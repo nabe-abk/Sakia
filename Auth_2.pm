@@ -142,6 +142,7 @@ sub auto_login {
 
 sub logout {
 	my $self = shift;
+	my $all  = shift // $self->{logout_all};
 	my $ROBJ = $self->{ROBJ};
 	my $DB   = $self->{DB};
 	my $id   = $self->{id};
@@ -154,7 +155,7 @@ sub logout {
 	if ($id eq '') { return; }
 
 	my $table = $self->{table} . '_sid';
-	if ($self->{logout_all}) {
+	if ($all) {
 		$DB->delete_match($table, 'id', $id);
 	} else {
 		$DB->delete_match($table, 'id', $id, 'pkey', $spkey);
