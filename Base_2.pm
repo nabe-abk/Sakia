@@ -1029,6 +1029,10 @@ sub generate_json {
 	my $data = shift;
 	my $opt  = shift || {};
 	my $tab  = shift || '';
+	my $chk  = shift || {};
+
+	if ($chk->{$data}) { die "cyclic object value in generate_json()"; }
+	$chk->{$data}=1;
 
 	my $cols = $opt->{cols};	# hash's data columns
 	my $ren  = $opt->{rename};	# hash's column rename
@@ -1050,7 +1054,7 @@ sub generate_json {
 			next;
 		}
 		if (ref($_) eq 'ARRAY') {
-			push(@ary, $self->generate_json($_, $opt, "$t$tab"));
+			push(@ary, $self->generate_json($_, $opt, "$t$tab", $chk));
 			next;
 		}
 
@@ -1065,7 +1069,7 @@ sub generate_json {
 				push(@a, "\"$k\":$s" . $self->_encode_json_val( $v ));
 				next;
 			}
-			my $ch = $self->generate_json( $v, $opt, "$t$tab" );		# nest
+			my $ch = $self->generate_json($v, $opt, "$t$tab", $chk);
 			push(@b, "\"$k\": $ch");
 		}
 		push(@ary, $is_ary
