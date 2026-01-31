@@ -1,7 +1,7 @@
 use strict;
 #-------------------------------------------------------------------------------
 # SMTP module
-#						(C)2006-2024 nabe / nabe@abk
+#						(C)2006-2026 nabe / nabe@abk
 #-------------------------------------------------------------------------------
 # Support IPv4 only.
 # Do not send large file.
@@ -48,7 +48,7 @@ sub new {
 sub send_mail {
 	my $self = shift;
 	my $h    = shift;
-	my $attaches = ref($_[0]) eq 'ARRAY' ? shift : \@_;
+	my $attaches = ref($_[0]) eq 'ARRAY' ? shift : ($_[0] ? \@_ : undef);
 	my $ROBJ = $self->{ROBJ};
 
 	my $to    = $self->check_mail_addresses($h->{to});
@@ -218,7 +218,7 @@ sub send_mail {
 		#---------------------------------------------------------------
 		local ($SIG{PIPE}) = sub { close($sock); die "PIPE broken"; };
 
-		$self->send_data($sock, $header);
+		$self->send_data($sock, $header . ($boundary ? "\r\n" : ''));
 
 		foreach(@contents) {
 			my $c_header = '';
