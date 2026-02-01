@@ -385,6 +385,7 @@ sub status_check {
 	if ($c == $code) { return $line; }
 
 	$self->send_quit($sock);
+	if ($line eq '') { die "Connection timeout! ($self->{TIMEOUT} sec)"; }
 	die ($data ? "$line / $data" : $line);
 }
 
@@ -462,9 +463,11 @@ sub auth_cram_md5 {
 sub check_mail_address {
 	my $self = shift;
 	my $adr  = shift;
-	if ($adr !~ /^[-\w\.]+\@(?:[-\w]+\.)+[-\w]+$/) { return; }
+	if ($adr !~ /^[\w\.\!\#\$\%\&\*\+\/=\?\^\`\{\|\}\~\-']+\@(?:[-\w]+\.)+[-\w]+$/) { return; }
 	return $adr;
 }
+
+
 sub check_mail_addresses {
 	my $self = shift;
 	my $adr  = shift;
@@ -472,7 +475,7 @@ sub check_mail_addresses {
 	my $ary  = ref($adr) ? $adr : [ split(/\s*,\s*/, $adr) ];
 	if (!@$ary) { return; }
 	foreach(@$ary) {
-		if ($_ !~ /^[-\w\.]+\@(?:[-\w]+\.)+[-\w]+$/) { return; }
+		if ($_ !~ /^[\w\.\!\#\$\%\&\*\+\/=\?\^\`\{\|\}\~\-']+\@(?:[-\w]+\.)+[-\w]+$/) { return; }
 	}
 	return \@$ary;
 }
