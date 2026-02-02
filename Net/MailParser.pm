@@ -328,7 +328,6 @@ sub decode_header_line {
 	my $self = shift;
 	my $line = shift;
 	my $code = shift;
-	my $ROBJ = $self->{ROBJ};
 
 	if ($line !~ /=\?.*\?=/) { return $line; }
 	$line =~ s/\x00//g;
@@ -362,7 +361,6 @@ sub parse_header_line {		# RFC2231
 	my $self = shift;
 	my $line = shift;
 	my $code = shift;
-	my $ROBJ = $self->{ROBJ};
 
 	# string
 	my @str;
