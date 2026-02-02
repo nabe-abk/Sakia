@@ -23,8 +23,8 @@ sub new {
 	$self->{code}    = $ROBJ->{SystemCode} || 'utf-8';
 	$self->{mailer} = "Sakia-Net-Mail Version $VERSION";
 
-	$self->{DEBUG}   = 0;
-	$self->{TIMEOUT} = 5;
+	$self->{DEBUG}   =  0;
+	$self->{TIMEOUT} = 10;
 
 	if (!%Auth) {
 		$Auth{PLAIN} = \&auth_plain;
