@@ -162,9 +162,16 @@ sub update_match {
 	# Contains an expression in the update data
 	my %funcs;
 	my %upcol;
+	my $cols = $self->{"$table.cols"};
 	foreach (keys(%$h)) {
 		if (ord($_) != 0x2a) { $upcol{$_}=1; next; }	# check "*column"
 		my $v = $h->{$_};
+
+		my $c = substr($_,1);
+		if (! $cols->{$c}) {
+			$self->error('In "%s" table, not found "%s" column.', $table, $c);
+			return 0;
+		}
 
 		$v =~ s![^\w\+\-\*\/\%\(\)\|\&\~<>]!!g;
 		if ($v =~ /\w\(/) {
@@ -219,7 +226,6 @@ sub update_match {
 	}
 
 	# checker
-	my $cols  = $self->{"$table.cols"};
 	my %check = map { $_ => $cols->{$_}->{check} } keys(%$cols);
 	my $nnull = $self->{"$table.notnull"};
 
