@@ -1031,7 +1031,7 @@ sub generate_json {
 	my $tab  = shift || '';
 	my $chk  = shift || {};
 
-	if ($chk->{$data}) { return; } #die "cyclic object value in generate_json()"; }
+	if ($chk->{$data}) { $self->error("cyclic object value in generate_json()"); return; }
 	$chk->{$data}=1;
 
 	my $cols = $opt->{cols};	# hash's data columns
