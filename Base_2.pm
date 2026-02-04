@@ -1032,7 +1032,6 @@ sub generate_json {
 	my $chk  = shift || {};
 
 	if ($chk->{$data}) { $self->error("cyclic object value in generate_json()"); return; }
-	$chk->{$data}=1;
 
 	my $cols = $opt->{cols};	# hash's data columns
 	my $ren  = $opt->{rename};	# hash's column rename
@@ -1050,6 +1049,7 @@ sub generate_json {
 		if (ref($_) eq 'SCALAR'){ push(@ary, $self->_encode_json_val($$_)); next; }
 		if (ref($_) eq 'CODE')  { push(@ary, $_); next; }
 		if (ref($_) eq 'ARRAY') {
+			$chk->{$data}=1;
 			push(@ary, $self->generate_json($_, $opt, "$t$tab", $chk));
 			next;
 		}
@@ -1067,6 +1067,7 @@ sub generate_json {
 			if (ref($v) eq 'SCALAR'){ push(@a, $k . $self->_encode_json_val($$v)); next; }
 			if (ref($v) eq 'CODE')  { push(@a, $k . $v); next; }
 
+			$chk->{$data}=1;
 			my $ch = $self->generate_json($v, $opt, "$t$tab", $chk);
 			push(@b, $k . $ch);
 		}
