@@ -1031,7 +1031,7 @@ sub generate_json {
 	my $tab  = shift || '';
 	my $chk  = shift || {};
 
-	if ($chk->{$data}) { die "cyclic object value in generate_json()"; }
+	if ($chk->{$data}) { return; } #die "cyclic object value in generate_json()"; }
 	$chk->{$data}=1;
 
 	my $cols = $opt->{cols};	# hash's data columns
@@ -1045,14 +1045,10 @@ sub generate_json {
 	my $dat = $is_ary ? $data : [$data];
 	foreach(@$dat) {
 		if (!defined $_)	{ push(@ary, 'null'); next; }
-		if (!ref($_))		{ push(@ary, $self->_encode_json_val($_)); next; }
-		if (ref($_) eq 'CODE')  { push(@ary, $_); next; }
+		if (!ref($_))		{ push(@ary, $self->_encode_json_val($_) ); next; }
 		if ($self->is_bool($_))	{ push(@ary, $_ ? 'true' : 'false');  next; }
-		if (ref($_) eq 'SCALAR'){
-			if ($$_ =~ /^true|false|null$/) { push(@ary, $$_); next; }			# true/false/null
-			push(@ary, '"' . ($$_ =~ s/(\\|\n|\t|\r|\b|\f|\")/$JSON_ESC{$1}/rg) . '"');	# force string
-			next;
-		}
+		if (ref($_) eq 'SCALAR'){ push(@ary, $self->_encode_json_val($$_)); next; }
+		if (ref($_) eq 'CODE')  { push(@ary, $_); next; }
 		if (ref($_) eq 'ARRAY') {
 			push(@ary, $self->generate_json($_, $opt, "$t$tab", $chk));
 			next;
@@ -1063,14 +1059,16 @@ sub generate_json {
 		my @b;
 		my $_cols = $cols ? $cols : [ keys(%$_) ];
 		foreach my $x (@$_cols) {
-			my $k = exists($ren->{$x}) ? $ren->{$x} : $x;
+			my $k = '"' . (exists($ren->{$x}) ? $ren->{$x} : $x) . '": ';
 			my $v = $_->{$x};
-			if (!ref($v)) {
-				push(@a, "\"$k\":$s" . $self->_encode_json_val( $v ));
-				next;
-			}
+			if (!defined $v)	{ push(@a, $k . 'null'); next; }
+			if (!ref($v))		{ push(@a, $k . $self->_encode_json_val($v) ); next; }
+			if ($self->is_bool($v))	{ push(@a, $k . ($v ? 'true' : 'false'));      next; }
+			if (ref($v) eq 'SCALAR'){ push(@a, $k . $self->_encode_json_val($$v)); next; }
+			if (ref($v) eq 'CODE')  { push(@a, $k . $v); next; }
+
 			my $ch = $self->generate_json($v, $opt, "$t$tab", $chk);
-			push(@b, "\"$k\": $ch");
+			push(@b, $k . $ch);
 		}
 		push(@ary, $is_ary
 			? "{"         . join(",$s"      , @a, @b) . "}"
@@ -1098,7 +1096,7 @@ sub false { $Sakia::boolean::false }
 sub null  { undef; }
 sub is_bool {
 	my $self = shift;
-	ref($_[0]) && UNIVERSAL::isa($_[0], 'Sakia::boolean');
+	UNIVERSAL::isa($_[0], 'Sakia::boolean');
 }
 #---------------------------------------
 package Sakia::boolean;
