@@ -135,7 +135,7 @@ sub parse_column {
 	#
 	my $v = $self->check_default_value($table, $col, $info, $h->{default}, $h->{default_sql});
 	if (!defined $v) {
-		return;
+		return 20;
 	}
 	$save{default} = $v;
 
