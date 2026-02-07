@@ -564,8 +564,8 @@ sub check_default_value {
 	}
 
 	if ($val ne '') {
-		my $v = $val;
-		if ($v ne '' && &{$info->{check}}($v) eq '') {
+		# Normalize $val in $info->{check}()
+		if ($val ne '' && &{$info->{check}}($val) eq '') {
 			$self->error('Column "%s %s" have invalid default value: %s', $col, $info->{type}, $val);
 			return;
 		}

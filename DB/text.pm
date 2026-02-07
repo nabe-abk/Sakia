@@ -1,7 +1,7 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Text database
-#						(C)2005-2025 nabe@abk
+#						(C)2005-2026 nabe@abk
 #-------------------------------------------------------------------------------
 # Note) Avoid destroying the internal hash array $db when returning values.
 #
@@ -32,7 +32,12 @@ sub check_timestmap {
 our %TypeInfo = (
 	int  => { type=>'int',    check=>sub{ my $v=shift; $v eq int($v) } },
 	float=> { type=>'float',  check=>sub{ my $v=shift; $v eq ($v+0)  } },
-	boolean=>{type=>'boolean',check=>sub{ my $v=shift; $v eq '0' || $v eq '1'} },
+	boolean=>{type=>'boolean',check=>sub{
+		my $v=$_[0];
+		   if ($v eq 't') { $_[0]='1'; return 1; }
+		elsif ($v eq 'f') { $_[0]='0'; return 1; }
+		$v eq '0' || $v eq '1';
+	}},
 	text => { type=>'text', is_str=>1, check=> sub { 1; } },
 	date => { type=>'date', is_str=>1, check=> sub {
 		$_[0] = &check_timestmap('%04d-%02d-%02d', $_[0])
