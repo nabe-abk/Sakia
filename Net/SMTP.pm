@@ -4,13 +4,13 @@ use strict;
 #						(C)2006-2026 nabe / nabe@abk
 #-------------------------------------------------------------------------------
 # Support IPv4 only.
-# Do not send large file.
 #
 package Sakia::Net::SMTP;
-our $VERSION = '1.52';
+our $VERSION = '1.53';
 #-------------------------------------------------------------------------------
 use Socket;
 use Fcntl;
+use MIME::Base64;
 ################################################################################
 # constructor
 ################################################################################
@@ -267,18 +267,19 @@ sub send_mail {
 
 			$self->send_data($sock, $c_header . "\r\n");
 
+			my $chunk = 57*1024;
 			if ($file ne '') {
 				sysopen(my $fh, $file, O_RDONLY) || die("file open failed: $file");
 				while(1) {
-					sysread($fh, my $data, 57) || last;
-					$self->send_data($sock, $self->base64encode($data) . "\r\n");
+					sysread($fh, my $data, $chunk) || last;
+					$self->send_data($sock, encode_base64($data));
 				}
 				close($fh);
 			} else {
 				my $len = length($_->{data});
-				for(my $p=0; $p<$len; $p+=57) {
-					my $data = substr($_->{data}, $p, 57);
-					$self->send_data($sock, $self->base64encode($data) . "\r\n");
+				for(my $p=0; $p<$len; $p+=$chunk) {
+					my $data = substr($_->{data}, $p, $chunk);
+					$self->send_data($sock, encode_base64($data));
 				}
 			}
 		}
@@ -431,7 +432,7 @@ sub auth_plain {
 	my $user = shift;
 	my $pass = shift;
 
-	my $plain = $self->base64encode("\0$user\0$pass");
+	my $plain = $self->base64encode_nolf("\0$user\0$pass");
 	$self->send_data_check($sock, $plain, 235);
 }
 
@@ -441,8 +442,8 @@ sub auth_login {
 	my $user = shift;
 	my $pass = shift;
 
-	$self->send_data_check($sock, $self->base64encode($user), 334);
-	$self->send_data_check($sock, $self->base64encode($pass), 235);
+	$self->send_data_check($sock, $self->base64encode_nolf($user), 334);
+	$self->send_data_check($sock, $self->base64encode_nolf($pass), 235);
 }
 
 sub auth_cram_md5 {
@@ -450,11 +451,11 @@ sub auth_cram_md5 {
 	my $sock = shift;
 	my $user = shift;
 	my $pass = shift;
-	my $str  = $self->base64decode(shift);
+	my $str  = decode_base64(shift);
 
 	my $md5 = Digest::HMAC_MD5::hmac_md5_hex($str,$pass);
 
-	$self->send_data_check($sock, $self->base64encode("$user $md5"), 235);
+	$self->send_data_check($sock, $self->base64encode_nolf("$user $md5"), 235);
 }
 
 ################################################################################
@@ -509,76 +510,18 @@ sub mail_date_local {
 ################################################################################
 # BASE64
 ################################################################################
-my $base64table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-my @base64ary = (
- 0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0,  0, 0, 0, 0,	# 0x00〜0x1f
- 0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0,  0, 0, 0, 0,	# 0x10〜0x1f
- 0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0,62,  0,62, 0,63,	# 0x20〜0x2f
-52,53,54,55, 56,57,58,59,  60,61, 0, 0,  0, 0, 0, 0,	# 0x30〜0x3f
- 0, 0, 1, 2,  3, 4, 5, 6,   7, 8, 9,10, 11,12,13,14,	# 0x40〜0x4f
-15,16,17,18, 19,20,21,22,  23,24,25, 0,  0, 0, 0,63,	# 0x50〜0x5f
- 0,26,27,28, 29,30,31,32,  33,34,35,36, 37,38,39,40,	# 0x60〜0x6f
-41,42,43,44, 45,46,47,48,  49,50,51, 0,  0, 0, 0, 0	# 0x70〜0x7f
-);
-
-#-------------------------------------------------------------------------------
-# BASE64 encode
-#-------------------------------------------------------------------------------
 sub mime_encode {
 	my $self = shift;
 	foreach(@_) {
-		$_ =~ s/([^\x00-\x7f]+)(?:(\s+)(?=[^\x00-\x7f]))?/ "=?$self->{code}?B?" . $self->base64encode($1 . $2) . '?=' /eg;
+		$_ =~ s/([^\x00-\x7f]+)(?:(\s+)(?=[^\x00-\x7f]))?/ "=?$self->{code}?B?" . $self->base64encode_nolf($1 . $2) . '?=' /eg;
 	}
 	return $_[0];
 }
-sub base64encode {
+sub base64encode_nolf {
 	my $self = shift;
-	my $str  = shift;
-	my $ret;
-
-	# 2 : 0000_0000 1111_1100
-	# 4 : 0000_0011 1111_0000
-	# 6 : 0000_1111 1100_0000
-	my ($i, $j, $x);
-	for($i=$x=0, $j=2; $i<length($str); $i++) {
-		$x    = ($x<<8) + ord(substr($str,$i,1));
-		$ret .= substr($base64table, ($x>>$j) & 0x3f, 1);
-
-		if ($j != 6) { $j+=2; next; }
-		# j==6
-		$ret .= substr($base64table, $x & 0x3f, 1);
-		$j    = 2;
-	}
-	if ($j != 2)    { $ret .= substr($base64table, ($x<<(8-$j)) & 0x3f, 1); }
-	if ($j == 4)    { $ret .= '=='; }
-	elsif ($j == 6) { $ret .= '=';  }
-
-	return $ret;
-}
-#-------------------------------------------------------------------------------
-# BASE64 decode
-#-------------------------------------------------------------------------------
-# used by cram_md5
-sub base64decode {	# 'normal' or 'URL safe'
-	my $self = shift;
-	my $str  = shift;
-
-	my $ret;
-	my $buf;
-	my $f;
-	$str =~ s/[=\.]+$//;
-	for(my $i=0; $i<length($str); $i+=4) {
-		$buf  = ($buf<<6) + $base64ary[ ord(substr($str,$i  ,1)) ];
-		$buf  = ($buf<<6) + $base64ary[ ord(substr($str,$i+1,1)) ];
-		$buf  = ($buf<<6) + $base64ary[ ord(substr($str,$i+2,1)) ];
-		$buf  = ($buf<<6) + $base64ary[ ord(substr($str,$i+3,1)) ];
-		$ret .= chr(($buf & 0xff0000)>>16) . chr(($buf & 0xff00)>>8) . chr($buf & 0xff);
-
-	}
-	my $f = length($str) & 3;	# mod 4
-	if ($f >1) { chop($ret); }
-	if ($f==2) { chop($ret); }
-	return $ret;
+	my $str  = encode_base64(shift);
+	chomp($str);
+	return $str;
 }
 
 1;
