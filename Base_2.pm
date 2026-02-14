@@ -399,18 +399,13 @@ sub fwrite_lines {
 
 	my $fail_flag=0;
 	my $fh;
-	my $append = $opt->{append} ? O_APPEND : 0;
-	if ( !sysopen($fh, $file, O_CREAT | O_WRONLY | $append) ) {
+	if (!sysopen($fh, $file, O_CREAT | O_WRONLY | ($opt->{append} ? O_APPEND : O_TRUNC))) {
 		$self->error("Can't write file: %s", $file);
 		close($fh);
 		return 1;
 	}
 	binmode($fh);
 	$self->write_lock($fh);
-	if (! $append) {
-		truncate($fh, 0);	# File size is 0
-		seek($fh, 0, 0);
-	}
 	foreach(@$lines) {
 		print $fh $_;
 	}
@@ -490,7 +485,7 @@ sub fedit_readlines {
 	my ($self, $file, $opt) = @_;
 
 	my $fh;
-	if ( !sysopen($fh, $file, O_CREAT | O_RDWR | ($opt->{append} ? O_APPEND : 0)) ) {
+	if (!sysopen($fh, $file, O_CREAT | O_RDWR)) {
 		my $err = $opt->{no_error} ? 'warning' : 'error';
 		$self->error("Can't open file for %s: %s", 'edit', $file);
 	}
