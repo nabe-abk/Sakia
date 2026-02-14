@@ -272,14 +272,14 @@ sub send_mail {
 				sysopen(my $fh, $file, O_RDONLY) || die("file open failed: $file");
 				while(1) {
 					sysread($fh, my $data, $chunk) || last;
-					$self->send_data($sock, encode_base64($data));
+					$self->send_data($sock, encode_base64($data, "\r\n"));
 				}
 				close($fh);
 			} else {
 				my $len = length($_->{data});
 				for(my $p=0; $p<$len; $p+=$chunk) {
 					my $data = substr($_->{data}, $p, $chunk);
-					$self->send_data($sock, encode_base64($data));
+					$self->send_data($sock, encode_base64($data, "\r\n"));
 				}
 			}
 		}
@@ -432,7 +432,7 @@ sub auth_plain {
 	my $user = shift;
 	my $pass = shift;
 
-	my $plain = $self->base64encode_nolf("\0$user\0$pass");
+	my $plain = encode_base64("\0$user\0$pass", "");
 	$self->send_data_check($sock, $plain, 235);
 }
 
@@ -442,8 +442,8 @@ sub auth_login {
 	my $user = shift;
 	my $pass = shift;
 
-	$self->send_data_check($sock, $self->base64encode_nolf($user), 334);
-	$self->send_data_check($sock, $self->base64encode_nolf($pass), 235);
+	$self->send_data_check($sock, encode_base64($user, ""), 334);
+	$self->send_data_check($sock, encode_base64($pass, ""), 235);
 }
 
 sub auth_cram_md5 {
@@ -455,7 +455,7 @@ sub auth_cram_md5 {
 
 	my $md5 = Digest::HMAC_MD5::hmac_md5_hex($str,$pass);
 
-	$self->send_data_check($sock, $self->base64encode_nolf("$user $md5"), 235);
+	$self->send_data_check($sock, encode_base64("$user $md5", ""), 235);
 }
 
 ################################################################################
@@ -507,21 +507,13 @@ sub mail_date_local {
 		, $mday, $year+1900, $hour, $min, $sec, $self->get_timezone());
 }
 
-################################################################################
-# BASE64
-################################################################################
+# BASE64 with MIME code
 sub mime_encode {
 	my $self = shift;
 	foreach(@_) {
-		$_ =~ s/([^\x00-\x7f]+)(?:(\s+)(?=[^\x00-\x7f]))?/ "=?$self->{code}?B?" . $self->base64encode_nolf($1 . $2) . '?=' /eg;
+		$_ =~ s/([^\x00-\x7f]+)(?:(\s+)(?=[^\x00-\x7f]))?/ "=?$self->{code}?B?" . encode_base64($1 . $2, "") . '?=' /eg;
 	}
 	return $_[0];
-}
-sub base64encode_nolf {
-	my $self = shift;
-	my $str  = encode_base64(shift);
-	chomp($str);
-	return $str;
 }
 
 1;
