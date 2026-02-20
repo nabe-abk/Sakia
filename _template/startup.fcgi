@@ -1,11 +1,11 @@
 #!/usr/bin/perl
-use 5.14.0;
+use v5.14;
 use strict;
 #-------------------------------------------------------------------------------
 # Sakia Startup routine (for FastCGI)
-#					Copyright (C)2005-2023 nabe@abk
+#					Copyright (C)2005-2026 nabe@abk
 #-------------------------------------------------------------------------------
-# Last Update : 2023/02/21
+# Last Update : 2026/02/21
 #
 BEGIN {
 	unshift(@INC, './lib');

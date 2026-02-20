@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-use 5.14.0;
+use v5.14;
 use strict;
 our $VERSION  = '1.30';
 our $SPEC_VER = '1.30';	# specification version for compatibility
