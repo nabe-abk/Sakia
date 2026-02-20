@@ -3,14 +3,17 @@ use strict;
 # SMTP module
 #						(C)2006-2026 nabe / nabe@abk
 #-------------------------------------------------------------------------------
-# Support IPv4 only.
+# Support IPv6.
 #
 package Sakia::Net::SMTP;
-our $VERSION = '1.53';
+our $VERSION = '1.60';
 #-------------------------------------------------------------------------------
-use Socket;
 use Fcntl;
 use MIME::Base64;
+use IO::Socket::INET();
+BEGIN { eval {
+	require IO::Socket::IP;		# corelist in "perl v5.19.8"
+} };
 ################################################################################
 # constructor
 ################################################################################
@@ -19,12 +22,11 @@ my %Auth;
 sub new {
 	my $self = bless({}, shift);
 	my $ROBJ = $self->{ROBJ} = shift;
+	$self->{timeout} = shift || 10;
 
-	$self->{code}    = $ROBJ->{SystemCode} || 'utf-8';
+	$self->{code}   = $ROBJ->{SystemCode} || 'utf-8';
 	$self->{mailer} = "Sakia-Net-Mail Version $VERSION";
-
-	$self->{DEBUG}   =  0;
-	$self->{TIMEOUT} = 10;
+	$self->{DEBUG}  =  0;
 
 	if (!%Auth) {
 		$Auth{PLAIN} = \&auth_plain;
@@ -159,28 +161,19 @@ sub send_mail {
 	#-----------------------------------------------------------------------
 	# original SMTP
 	#-----------------------------------------------------------------------
-	my $sock;
-	{
-		my $ip_bin = inet_aton($host);
-		if ($ip_bin eq '') {
-			$ROBJ->msg("Can't find host: %s", $host);
-			return 20;
-		}
-		my $addr = pack_sockaddr_in($port, $ip_bin);
-		socket($sock, Socket::PF_INET(), Socket::SOCK_STREAM(), 0);
-		{
-			local $SIG{ALRM} = sub { close($sock); };
-			alarm( $self->{TIMEOUT} );
-			my $r = connect($sock, $addr);
-			alarm(0);
-			if (!$r) {
-				close($sock);
-				$ROBJ->msg("Can't connect host: %s", $host);
-				return 21;
-			}
-		}
-		binmode($sock);
+	my $class = $IO::Socket::IP::VERSION ? 'IO::Socket::IP' : 'IO::Socket::INET';
+	my $sock  = $class->new(
+		PeerHost => $host,
+		PeerPort => $port,
+		Proto    => 'tcp',
+		Timeout  => $self->{timeout}
+	);
+	if (!$sock) {
+		$ROBJ->error("%s '$host:$port'", $@);
+		return 20;
 	}
+	binmode($sock);
+
 	$self->{buf}='';
 	eval {
 		$self->status_check($sock, 220);
@@ -293,7 +286,7 @@ sub send_mail {
 
 	close($sock);
 	if ($@) {
-		$ROBJ->msg('SMTP Error: %s', $@);	## mskip
+		$ROBJ->error('SMTP Error: %s', $@);
 		return 200;
 	}
 	return 0;
@@ -386,7 +379,7 @@ sub status_check {
 	if ($c == $code) { return $line; }
 
 	$self->send_quit($sock);
-	if ($line eq '') { die "Connection timeout! ($self->{TIMEOUT} sec)"; }
+	if ($line eq '') { die "Connection timeout! ($self->{timeout} sec)"; }
 	die ($data ? "$line / $data" : $line);
 }
 
@@ -405,7 +398,7 @@ sub recive_line {
 	my $buf = $self->{buf};
 	if ($buf eq '') {
 		vec(my $in, fileno($sock), 1) = 1;
-		my $r = select($in, undef, undef, $self->{TIMEOUT});
+		my $r = select($in, undef, undef, $self->{timeout});
 		if ($r <= 0) { return; }
 		if (!sysread($sock, $buf, 4096, length($buf))) { return; }
 	}
@@ -516,4 +509,19 @@ sub mime_encode {
 	return $_[0];
 }
 
+################################################################################
+# Accessor
+################################################################################
+sub timeout {
+	my $self = shift;
+	my $r = $self->{timeout};
+	if (@_) { $self->{timeout}=shift; }
+	return $r;
+}
+sub mailer {
+	my $self = shift;
+	my $r = $self->{mailer};
+	if (@_) { $self->{mailer}=shift; }
+	return $r;
+}
 1;

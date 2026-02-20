@@ -1,16 +1,19 @@
 use strict;
 #-------------------------------------------------------------------------------
 # HTTP module
-#							(C)2006-2023 nabe@abk
+#							(C)2006-2026 nabe@abk
 #-------------------------------------------------------------------------------
 # - support Cookie (ignore 2nd level domain)
 # - support https, if exists Net::SSLeay v1.50 or later
 # - support IPv6
 #
 package Sakia::Net::HTTP;
-our $VERSION = '2.00';
+our $VERSION = '2.10';
 #-------------------------------------------------------------------------------
-use Socket;
+use IO::Socket::INET();
+BEGIN { eval {
+	require IO::Socket::IP;		# corelist in "perl v5.19.8"
+} };
 ################################################################################
 # constructor
 ################################################################################
@@ -77,7 +80,6 @@ sub request {
 	}
 	return $data;
 }
-
 
 ################################################################################
 # Request
@@ -273,14 +275,16 @@ sub send_data {
 
 	$self->save_log_spliter();
 
-	my $sock;
-	my $alarm;
-	local $SIG{ALRM} = sub { $alarm=1; if ($sock) { close($sock); } };
-	local $SIG{PIPE} = $SIG{ALRM};
-	alarm( $self->{timeout} );
-
-	my $sock = $self->connect_host($host, $port);
-	if ($alarm || !defined $sock) { return; }
+	my $class = $IO::Socket::IP::VERSION ? 'IO::Socket::IP' : 'IO::Socket::INET';
+	my $sock  = $class->new(
+		PeerHost => $host,
+		PeerPort => $port,
+		Proto    => 'tcp',
+		Timeout  => $self->{timeout}
+	);
+	if (!$sock) {
+		return $self->error("%s '$host:$port'", $@);
+	}
 	binmode($sock);
 
 	$self->save_log($_[0]);
@@ -288,71 +292,8 @@ sub send_data {
 	my $func = $https ? 'send_over_ssl' : 'send_over_tcp';
 	my $data = $self->$func($sock, $host, @_);
 	close($sock);
-	if ($alarm || !$data) { return; }
 
 	return $data;
-}
-
-#-------------------------------------------------------------------------------
-# Connect
-#-------------------------------------------------------------------------------
-sub connect_host {
-	my ($self, $host, $port) = @_;
-
-	if ($self->{ipv6} && $host =~ /\[(.*)\]/) {	# http://[fe80::1]/
-		return $self->connect_host6($1, $port);
-	}
-	if ($self->{ipv6} && $self->{ipv6_preferred}) {
-		return $self->connect_host6($host, $port, 'to_v4');
-	}
-	return $self->connect_host4($host, $port, 'to_v6');
-}
-
-sub connect_host4 {
-	my ($self, $host, $port, $to_v6) = @_;
-
-	my $ip_bin = inet_aton($host);
-	if ($ip_bin eq '') {
-		if ($to_v6) { return $self->connect_host6($host, $port); }
-		return $self->error("Can't find host: %s", $host);
-	}
-	my $sockaddr = pack_sockaddr_in($port, $ip_bin);
-	my $sock;
-	if (! socket($sock, &Socket::PF_INET, &Socket::SOCK_STREAM, 0)) {
-		return $self->error("Can't open socket.");
-	}
-	if (!connect($sock, $sockaddr)) {
-		return $self->error("Can't connect host: %s", $host);
-	}
-	if ($self->{debug_log}) {
-		my $ip = inet_ntoa($ip_bin);
-		$self->save_log("Connect to $ip:$port\n");
-	}
-	return $sock;
-}
-
-sub connect_host6 {
-	my ($self, $host, $port, $to_v4) = @_;
-
-	my ($err,@res) = Socket::getaddrinfo($host,$port);
-	@res = grep { $_->{addr} } @res;
-	if (!@res) {
-		if ($to_v4) { return $self->connect_host4($host, $port); }
-		return $self->error("Can't find host: %s", $host);
-	}
-	my $sockaddr = $res[0]->{addr};
-	my $sock;
-	if (! socket($sock, &Socket::PF_INET6, &Socket::SOCK_STREAM, 0)) {
-		return $self->error("Can't open socket.");
-	}
-	if (!connect($sock, $sockaddr)) {
-		return $self->error("Can't connect host: %s", $host);
-	}
-	if ($self->{debug_log}) {
-		my $ip = Socket::inet_ntop(&Socket::AF_INET6, (unpack_sockaddr_in6($sockaddr))[1]);
-		$self->save_log("Connect to $ip:$port\n");
-	}
-	return $sock;
 }
 
 #-------------------------------------------------------------------------------
@@ -462,10 +403,17 @@ sub header {
 	my $self = shift;
 	return @_ ? $self->{header}->{$_[0]} : $self->{header};
 }
+sub timeout {
+	my $self = shift;
+	my $r = $self->{timeout};
+	if (@_) { $self->{timeout}=shift; }
+	return $r;
+}
 sub agent {
 	my $self = shift;
+	my $r = $self->{agent};
 	if (@_) { $self->{agent}=shift; }
-	return $self->{agent};
+	return $r;
 }
 sub is_success {
 	my $self = shift;
@@ -513,15 +461,6 @@ sub save_cookie {
 ################################################################################
 # subroutine
 ################################################################################
-sub set_timeout {
-	my ($self, $timeout) = @_;
-	$self->{timeout} = int($timeout) || 30;
-}
-sub set_agent {
-	my $self = shift;
-	$self->{agent} = shift || "SimpleHTTP/$VERSION";
-}
-
 sub save_log {
 	my $self = shift;
 	my $file = $self->{debug_log};
