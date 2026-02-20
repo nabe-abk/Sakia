@@ -1,13 +1,13 @@
 #!/usr/bin/perl
 use 5.14.0;
 use strict;
-our $VERSION  = '1.26';
-our $SPEC_VER = '1.12';	# specification version for compatibility
+our $VERSION  = '1.30';
+our $SPEC_VER = '1.30';	# specification version for compatibility
 ################################################################################
-# Sakia HTTP Server
-#					Copyright (C)2019-2025 nabe@abk
+# Sakia system - HTTP Server
+#					Copyright (C)2019-2026 nabe@abk
 ################################################################################
-# Last Update : 2025-06-29
+# Last Update : 2026/02/21
 #
 BEGIN {
 	my $path = $0;
@@ -20,7 +20,7 @@ use Fcntl;
 use threads;		# for ithreads
 use POSIX;		# for waitpid(<pid>, WNOHANG);
 use Cwd;		# for $ENV{DOCUMENT_ROOT}
-use Time::HiRes;	# for ualarm() and generate random string
+use Time::HiRes;	# for generate random string
 #-------------------------------------------------------------------------------
 # Crypt patch for Windows
 #-------------------------------------------------------------------------------
@@ -48,13 +48,14 @@ my $GENERATE_CONF= 1;
 my $UNIX_SOCK;
 my $PATH      = '/';
 my $PORT      = $IsWindows ? 80 : 8888;
-my $ITHREADS  = $IsWindows;
-my $TIMEOUT   =  3;
+my $ITHREADS  =  1;
+my $TIMEOUT   =  5;
+my $TIMEOUT_BIN;
 my $DEAMONS   = 10;
 my $KEEPALIVE = 1;
 my $BUFSIZE_u = '1M';	# 1MB
 my $BUFSIZE;		# byte / set from $BUFSIZE_u
-my $MIME_FILE;
+my $MIME_FILE = '/etc/mime.types';
 my $INDEX     = 'index.html';
 my $PID;
 my $R_BITS;	# select socket bits
@@ -76,29 +77,26 @@ if ($IsWindows) {
 # Web Server data
 #-------------------------------------------------------------------------------
 my %DENY_DIRS;
-my %MIME_TYPE;
-my $MIME_DEFAULT=<<'MIME';
-text/html		html htm
-text/plain		txt text
-text/css		css
-application/javascript	js mjs
-application/json	json
-application/xml		xml
-application/pdf		pdf
-image/png		png
-image/gif		gif
-image/jpeg		jpeg jpg
-image/webp		webp
-image/vnd.microsoft.icon ico
-audio/mpeg		mp3
-audio/mp4		m4a
-audio/x-wav		wav
-audio/ogg		oga ogg
-video/webm		webm
-video/mp4		mp4 mpg4 m4v
-video/ogg		ogv
-video/x-matroska	mpv mkv
-MIME
+my %MIME_TYPE = ( 
+	html => 'text/html',
+	htm  => 'text/html',
+	text => 'text/plain',
+	txt  => 'text/plain',
+	md   => 'text/markdown',
+	css  => 'text/css',
+	js   => 'application/javascript',
+	json => 'application/json',
+	xml  => 'application/xml',
+	gif  => 'image/gif',
+	png  => 'image/png',
+	jpg  => 'image/jpeg',
+	jpeg => 'image/jpeg',
+	webp => 'image/webp',
+	m4a  => 'audio/mp4',
+	mp4  => 'video/mp4',
+	webm => 'video/webm',
+	ico  => 'image/vnd.microsoft.icon'
+);
 
 #-------------------------------------------------------------------------------
 # for RFC date
@@ -186,7 +184,7 @@ my %SIZE_UNIT = ('K' => 1024, 'M' => 1024*1024, 'G' => 1024*1024*1024);
 				print STDERR "Invalid argument: -$k option >>$val\n";	## safe
 				exit(-1);
 			}
-			if ($k eq 't') { $TIMEOUT = $val; next; }
+			if ($k eq 't') { $TIMEOUT = $val+0; next; }
 
 			#---------------------------------------------
 			# integer argument
@@ -224,16 +222,16 @@ Usage: $0 [options] [path]
 Available options are:
   path		working web path (default:/)
   -p port	bind port (default:8888, windows:80)
-  -t timeout	connection timeout second (default:3, min:0.001)
-  -d daemons	start daemons (default:10, min:1)
+  -t timeout	connection timeout second (default:5, min:0.001)
+  -d max_con	maximum connections (default:10, min:1)
   -m max_req	maximum cgi requests per daemon (default:10000, min:100)
-  -e mime_file	load MIME types file (default: info/mime.types and /etc/mime.types)
+  -e mime_file	load mime types file name (default: /etc/mime.types)
   -c  fs_code	set file system's character code (default is auto)
   -cs sys_code	set cgi  system's character code (default: UTF-8)
   -b bufsize	buffer size [KB] (default:1024 = 1M, min:64)
   -u filename	UNIX domain socket mode
-  -f		use fork()
-  -i		use threads (ithreads)
+  -f		use fork
+  -i		use threads (default)
   -k1		connection keep-alive enable (default)
   -k0		connection keep-alive disable
   -t0		set ENV SakiaTimer=0
@@ -340,39 +338,40 @@ print(
 	. "\tStart up daemon: $DEAMONS " . ($ITHREADS ? 'threads' : 'process')
 	. ", Max cgi requests: $MAX_CGI_REQUESTS\n"
 );
+
+#-------------------------------------------------------------------------------
+# set TIMEOUT_BIN
+#-------------------------------------------------------------------------------
+if (1) {
+	my $sec  = int($TIMEOUT);
+	my $usec = ($TIMEOUT - $sec) * 1_000_000;
+	$TIMEOUT_BIN = pack('l!l!', $sec, $usec);
+}
+
 #-------------------------------------------------------------------------------
 # load mime types
 #-------------------------------------------------------------------------------
-if (1) {
-	my @lines = split(/\n/, $MIME_DEFAULT);
-	my $load;
+if ($MIME_FILE && -e $MIME_FILE) {
+	print "\tLoad mime types: $MIME_FILE ";
+	my $r = sysopen(my $fh, $MIME_FILE, O_RDONLY);
+	if (!$r) {
+		print "(error!)\n";
+	} else {
 
-	$MIME_FILE ||= -r 'info/mime.types' ? 'info/mime.types' : '';
-	$MIME_FILE ||= -r '/etc/mime.types' ? '/etc/mime.types' : '';
-
-	if ($MIME_FILE) {
-		print "\tLoad MIME types: $MIME_FILE ";
-		my $r = sysopen(my $fh, $MIME_FILE, O_RDONLY);
-		if (!$r) {
-			print "-> load error!\n";
-		} else {
-			@lines = <$fh>;
-			$load  = 1;
+		my $c=0;
+		while(<$fh>) {
+			chomp($_);
+			$_ =~ s/#.*//;
+			my ($type, @ary) = split(/\s+/, $_);
+			if ($type eq '' || !@ary) { next; }
+			foreach(@ary) {
+				$MIME_TYPE{$_} = $type;
+				$c++;
+			}
 		}
-		close($fh)
+		print "(load $c extensions)\n";
 	}
-	my $c=0;
-	foreach(@lines) {
-		chomp($_);
-		$_ =~ s/[\r#].*//;
-		my ($type, @ary) = split(/\s+/, $_);
-		if ($type eq '' || !@ary) { next; }
-		foreach(@ary) {
-			$MIME_TYPE{$_} = $type;
-			$c++;
-		}
-	}
-	$load && print "-> load $c extensions\n";
+	close($fh);
 }
 
 #-------------------------------------------------------------------------------
@@ -380,9 +379,8 @@ if (1) {
 #-------------------------------------------------------------------------------
 {
 	my @dirs = &search_dir_file('.htaccess');
-	if (-r '.git') { push(@dirs, '.git'); }
 
-	print "\tDeny dirs: " . join('/, ', @dirs) . "/\n";
+	print "\tDeny dirs: " . join('/, ', @dirs) . "/ and .*/\n";
 	foreach(@dirs) {
 		$DENY_DIRS{$_}=1;
 	}
@@ -458,7 +456,9 @@ if ($GENERATE_CONF) {
 ################################################################################
 {
 	$SIG{USR1} = sub {};	# wake up for main process
-	$SIG{PIPE} = 'IGNORE';
+	$SIG{PIPE} = 'IGNORE';	#
+	$SIG{CHLD} = 'IGNORE';	# thread's SIGNAL call to main thread
+	$SIG{ALRM} = 'IGNORE';	#
 
 	# prefork / create_threads
 	for(my $i=0; $i<$DEAMONS; $i++) {
@@ -478,13 +478,15 @@ if ($GENERATE_CONF) {
 	}
 
 	# open Browser on windows
-	&open_browser_on_windows();
+	if ($PORT && $IsWindows && $OPEN_BROWSER) {
+		&open_browser_on_windows();
+	}
 
 	# main thread
 	while(1) {
 		sleep(3);
-		$exit_daemons = $ITHREADS ? ($DEAMONS - $#{[ threads->list() ]} - 1) : $exit_daemons;
-		if (!$exit_daemons) { next; }
+		$exit_daemons = $ITHREADS ? ($DEAMONS - scalar(threads->list())) : $exit_daemons;
+		if ($exit_daemons<1) { next; }
 
 		# Restart dead daemons
 		## print STDERR "Restart daemons $exit_daemons\n";
@@ -561,6 +563,7 @@ sub accept_client {
 	my $addr = shift;
 	my $bak  = shift;
 	binmode($sock);
+	setsockopt($sock, SOL_SOCKET, SO_RCVTIMEO, $TIMEOUT_BIN);	# invalid on windows
 
 	if ($PORT) {
 		my ($port, $ip_bin) = sockaddr_in($addr);
@@ -615,35 +618,30 @@ sub parse_request {
 	#---------------------------------------------------
 	my @header;
 	{
-		my $break;
-		my $bad_req;
-
-		local $SIG{ALRM} = sub { close($sock); $break=1; };
-		&my_alarm( $TIMEOUT, $sock );
+		if ($IsWindows) {
+			my $r = select(my $x = $R_BITS, undef, undef, $TIMEOUT);
+			if (!$r) { return; }
+		}
 
 		my $first=1;
 		while(1) {
 			my $line = <$sock>;
-			if (!defined $line)  {	# disconnect
-				$break=1;
-				last;
-			}
+			if (!defined $line) { return; }	# disconnect
+
 			$line =~ s/[\r\n]//g;
 
 			if ($first) {		# (example) HTTP/1.1 GET /
 				$first = 0;
-				$bad_req = &analyze_request($state, $line);
-				if ($bad_req) { last; }
+				my $bad_req = &analyze_request($state, $line);
+				if ($bad_req) {
+					return $state;
+				}
 				next;
 			}
 
 			if ($line eq '') { last; }
 			push(@header, $line);
 		}
-
-		&my_alarm(0);
-		if ($break)   { return; }
-		if ($bad_req) { return $state; }
 	}
 
 	#---------------------------------------------------
@@ -768,7 +766,10 @@ sub try_file_read {
 
 	$file =~ s|/+|/|g;
 	$file =~ s|\?.*||;
-	if ($file =~ m|/\.\./|) { return; }
+	if ($file =~ m|/\.\./|)   { return; }	# ignore parent dir
+	if ($file =~ m|^/\..*/|)  { return; }	# ignore .*/ dirs
+	if ($file =~ m|^/[^/]*$|) { return; }	# ignore current dir files
+
 	if ($INDEX && $file ne '/' && substr($file, -1) eq '/') {
 		$file .= $INDEX;
 	}
@@ -785,9 +786,6 @@ sub try_file_read {
 		if ($file ne '/favicon.ico') { return; }
 		$state->{type} = 'file';
 		return &_404_not_found($state);
-	}
-	if ($file =~ m|^/[^/]*$|) {	# ignore current dir files
-		return;
 	}
 
 	#---------------------------------------------------
@@ -1042,7 +1040,7 @@ sub search_dir_file {
 }
 
 #-------------------------------------------------------------------------------
-# deny directories
+# random string
 #-------------------------------------------------------------------------------
 sub generate_random_string {
 	my $_SALT = 'xL6R.JAX38tUanpyFfjZGQ49YceKqs2NOiwB/ubhHEMzo7kSC5VDPWrm1vgT0lId';
@@ -1056,31 +1054,12 @@ sub generate_random_string {
 }
 
 #-------------------------------------------------------------------------------
-# alarm
-#-------------------------------------------------------------------------------
-sub my_alarm {
-	my $timeout = shift;
-	if (!$IsWindows && !$ITHREADS) {
-		return Time::HiRes::alarm($timeout);
-	}
-	# $IsWindows or $ITHREADS
-	if ($timeout <= 0) { return; }
-
-	my $sock = shift;
-	my $r = select(my $x = $R_BITS, undef, undef, $timeout);
-
-	if (!$r) {	# timeout
-		&{ $SIG{ALRM} }();
-	}
-}
-
-#-------------------------------------------------------------------------------
 # open Browser on windows
 #-------------------------------------------------------------------------------
 sub open_browser_on_windows {
 	if ($IsWindows && $OPEN_BROWSER) {
 		my $url = 'http://' . $ENV{SERVER_NAME} . ($PORT==80 ? '' : ":$PORT");
-		system("cmd.exe /c start $url/#autoopen");
+		system("cmd.exe /c start $url$PATH#auto-open");
 	}
 }
 
