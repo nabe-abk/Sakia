@@ -2,7 +2,7 @@
 use v5.14;
 use strict;
 #-------------------------------------------------------------------------------
-# Sakia Startup routine (for FastCGI)
+# Sakia system - startup routine (for FastCGI)
 #					Copyright (C)2005-2026 nabe@abk
 #-------------------------------------------------------------------------------
 # Last Update : 2026/02/21
