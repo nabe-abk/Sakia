@@ -56,7 +56,7 @@ my $KEEPALIVE = 1;
 my $BUFSIZE_u = '1M';	# 1MB
 my $BUFSIZE;		# byte / set from $BUFSIZE_u
 my $MIME_FILE;
-my @MIME_LIST = qw(/etc/mime.types ./mime.types ./lib/mime.types);
+my @MIME_LIST = qw(/etc/mime.types mime.types lib/mime.types);
 my $INDEX     = 'index.html';
 my $PID;
 my $R_BITS;	# select socket bits
@@ -216,7 +216,7 @@ my %SIZE_UNIT = ('K' => 1024, 'M' => 1024*1024, 'G' => 1024*1024*1024);
 	if ($BUFSIZE < 65536) { $BUFSIZE_u='64K'; $BUFSIZE = 65536; }
 
 	if ($help) {
-		my $n = $IsWindows ? "" : '';
+		my $mime = join(', ', @MIME_LIST);
 		print <<HELP;
 Sakia HTTP Server - Version $VERSION
 
@@ -227,7 +227,7 @@ Available options are:
   -t timeout	connection timeout second (default:5, min:0.001)
   -d max_con	maximum connections (default:10, min:1)
   -m max_req	maximum cgi requests per daemon (default:10000, min:100)
-  -e mime_file	mime types file (default: /etc/mime.types, lib/mime.types)
+  -e mime_file	MIME file (default:$mime)
   -c  fs_code	set file system's character code (default is auto)
   -cs sys_code	set cgi  system's character code (default: UTF-8)
   -b bufsize	buffer size [KB] (default:1024 = 1M, min:64)
