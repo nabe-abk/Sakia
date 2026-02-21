@@ -7,7 +7,7 @@ our $SPEC_VER = '1.30';	# specification version for compatibility
 # Sakia system - HTTP Server
 #					Copyright (C)2019-2026 nabe@abk
 ################################################################################
-# Last Update : 2026/02/21
+# Last Update : 2026-02-21
 #
 BEGIN {
 	my $path = $0;

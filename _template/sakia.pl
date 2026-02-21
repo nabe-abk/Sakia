@@ -2,9 +2,9 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Sakia initalizer
-#						Copyright (C)2023 nabe@abk
+#						Copyright (C)2026 nabe@abk
 #-------------------------------------------------------------------------------
-my $LastUpdate = '2023.08.11';
+my $LastUpdate = '2026.02.21';
 ################################################################################
 # Default setting
 ################################################################################
@@ -13,6 +13,7 @@ my $NAME;
 my $LIB_NAME;
 my $FORCE;
 my $README=1;
+my $UPDATE;
 
 my $GIT_SAKIA = 'git@github.com:nabe-abk/Sakia.git';
 #-------------------------------------------------------------------------------
@@ -24,10 +25,11 @@ my $GIT_SAKIA = 'git@github.com:nabe-abk/Sakia.git';
 	my $err  = '';
 	while(@ARGV) {
 		my $x = shift(@ARGV);
-		if ($x eq '-b') { $BASE =shift(@ARGV); next; }
-		if ($x eq '-f') { $FORCE=1;  next; }
+		if ($x eq '-b') { $BASE=shift(@ARGV); next; }
+		if ($x eq '-f') { $FORCE =1; next; }
 		if ($x eq '-n') { $README=0; next; }
-		if ($x eq '-h') { $HELP =1;  next; }
+		if ($x eq '-h') { $HELP  =1; next; }
+		if ($x eq '-u') { $UPDATE=1; next; }
 		push(@ary, $x);
 	}
 	$NAME = shift(@ary);
@@ -39,6 +41,7 @@ Usage: $0 [options] <project-name>
 Available options are:
   -b		Base directory (default: ./)
   -f		Force overwrite
+  -u		Update existing .cgi/.fcgi/.httpd.pl files
   -n		No README file
   -h		View this help
 HELP
@@ -71,6 +74,10 @@ $LIB_NAME = $NAME =~ s/-/_/rg;
 # main start
 ################################################################################
 my $TARDIR = $BASE . $NAME;
+if ($UPDATE) {
+	&update();
+	exit;
+}
 if (!-d $TARDIR) {
 	print "create directory: $TARDIR\n";
 	mkdir($TARDIR);
@@ -152,6 +159,31 @@ foreach(@$files) {
 &copy_file('_htaccess_root', '.htaccess');
 &copy_file('_gitignore',     '.gitignore');
 
+################################################################################
+# update mode
+################################################################################
+sub update {
+	print "Update startup scripts.\n";
+	# over write startup script
+	my $TPLDIR = "$TARDIR/lib/Sakia/_template";
+
+	foreach(qw(.cgi .fcgi .httpd.pl)) {
+		my $src = "$TPLDIR/startup$_";
+		my $des = "$TARDIR/$NAME$_";
+		if (!-e $des) { next; }
+
+		print " $des ";
+		my ($smod, $ssize) = &get_lastmodified($src);
+		my ($dmod, $dsize) = &get_lastmodified($des);
+		if ($smod == $dmod && $ssize == $dsize) {
+			print "skip\n";
+			next;
+		}
+		system("cp -p '$src' '$des'");
+		chmod(0755, $des);
+		print "update\n";
+	}
+}
 
 ################################################################################
 # subroutine
@@ -200,3 +232,9 @@ sub make_file {
 	$ROBJ->fwrite_lines("$TARDIR/$file", $lines);
 }
 
+sub get_lastmodified {
+	my @st   = stat(shift);
+	my $mod  = $st[9];		# last modified
+	my $size = $st[7];
+	return ($mod, $size);
+}

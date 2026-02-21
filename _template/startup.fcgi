@@ -5,7 +5,7 @@ use strict;
 # Sakia system - startup routine (for FastCGI)
 #					Copyright (C)2005-2026 nabe@abk
 #-------------------------------------------------------------------------------
-# Last Update : 2026/02/21
+# Last Update : 2026-02-21
 #
 BEGIN {
 	unshift(@INC, './lib');
