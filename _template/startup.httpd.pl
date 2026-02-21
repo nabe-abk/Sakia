@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 use v5.14;
 use strict;
-our $VERSION  = '1.30';
-our $SPEC_VER = '1.30';	# specification version for compatibility
+our $VERSION  = '2.00';
+our $SPEC_VER = '2.00';	# specification version for compatibility
 ################################################################################
 # Sakia system - HTTP Server
 #					Copyright (C)2019-2026 nabe@abk
@@ -55,7 +55,8 @@ my $DEAMONS   = 10;
 my $KEEPALIVE = 1;
 my $BUFSIZE_u = '1M';	# 1MB
 my $BUFSIZE;		# byte / set from $BUFSIZE_u
-my $MIME_FILE = '/etc/mime.types';
+my $MIME_FILE;
+my @MIME_LIST = qw(/etc/mime.types ./mime.types ./lib/mime.types);
 my $INDEX     = 'index.html';
 my $PID;
 my $R_BITS;	# select socket bits
@@ -92,10 +93,11 @@ my %MIME_TYPE = (
 	jpg  => 'image/jpeg',
 	jpeg => 'image/jpeg',
 	webp => 'image/webp',
+	ico  => 'image/vnd.microsoft.icon',
 	m4a  => 'audio/mp4',
 	mp4  => 'video/mp4',
 	webm => 'video/webm',
-	ico  => 'image/vnd.microsoft.icon'
+	pdf  => 'application/pdf'
 );
 
 #-------------------------------------------------------------------------------
@@ -214,7 +216,7 @@ my %SIZE_UNIT = ('K' => 1024, 'M' => 1024*1024, 'G' => 1024*1024*1024);
 	if ($BUFSIZE < 65536) { $BUFSIZE_u='64K'; $BUFSIZE = 65536; }
 
 	if ($help) {
-		my $n = $IsWindows ? "  -n\t\tdo not open web browser\n" : '';
+		my $n = $IsWindows ? "" : '';
 		print <<HELP;
 Sakia HTTP Server - Version $VERSION
 
@@ -225,7 +227,7 @@ Available options are:
   -t timeout	connection timeout second (default:5, min:0.001)
   -d max_con	maximum connections (default:10, min:1)
   -m max_req	maximum cgi requests per daemon (default:10000, min:100)
-  -e mime_file	load mime types file name (default: /etc/mime.types)
+  -e mime_file	mime types file (default: /etc/mime.types, lib/mime.types)
   -c  fs_code	set file system's character code (default is auto)
   -cs sys_code	set cgi  system's character code (default: UTF-8)
   -b bufsize	buffer size [KB] (default:1024 = 1M, min:64)
@@ -239,7 +241,8 @@ Available options are:
   -s		silent mode
   -sc		silent mode for cgi  access
   -sf		silent mode for file access
-$n  -?|-h		view this help
+  -n		do not open web browser (Windows only)
+  -?|-h		view this help
 HELP
 		exit(0);
 	}
@@ -321,7 +324,7 @@ if ($UNIX_SOCK ne '') {
 	chmod(0777, $UNIX_SOCK);
 	$PORT=0;
 
-	print	"\tUNIX domain socket: $UNIX_SOCK\n"
+	print "    UNIX domain socket: $UNIX_SOCK\n"
 
 } else {
 	socket($srv, PF_INET, SOCK_STREAM, getprotobyname('tcp'))	|| die "socket failed: $!";
@@ -331,11 +334,11 @@ if ($UNIX_SOCK ne '') {
 }
 
 print(
-	($PORT ? "\tListen $PORT port," : "\tNo Listen port,")
+	($PORT ? "    Listen $PORT port," : "    No Listen port,")
 		. " Timeout $TIMEOUT sec,"
 		. " Buffer ${BUFSIZE_u}B,"
 		. " Keep-Alive " . ($KEEPALIVE ? 'on' : 'off') . "\n"
-	. "\tStart up daemon: $DEAMONS " . ($ITHREADS ? 'threads' : 'process')
+	. "    Start up: $DEAMONS " . ($ITHREADS ? 'threads' : 'process')
 	. ", Max cgi requests: $MAX_CGI_REQUESTS\n"
 );
 
@@ -351,8 +354,11 @@ if (1) {
 #-------------------------------------------------------------------------------
 # load mime types
 #-------------------------------------------------------------------------------
-if ($MIME_FILE && -e $MIME_FILE) {
-	print "\tLoad mime types: $MIME_FILE ";
+if (!$MIME_FILE) {
+	($MIME_FILE) = grep { -r $_ } @MIME_LIST;
+}
+if ($MIME_FILE) {
+	print "    Load mime types: $MIME_FILE ";
 	my $r = sysopen(my $fh, $MIME_FILE, O_RDONLY);
 	if (!$r) {
 		print "(error!)\n";
@@ -380,7 +386,7 @@ if ($MIME_FILE && -e $MIME_FILE) {
 {
 	my @dirs = &search_dir_file('.htaccess');
 
-	print "\tDeny dirs: " . join('/, ', @dirs) . "/ and .*/\n";
+	print "    Deny dirs: " . join('/, ', @dirs) . "/ and .*/\n";
 	foreach(@dirs) {
 		$DENY_DIRS{$_}=1;
 	}
@@ -405,7 +411,7 @@ if ($FS_CODE) {
 		exit(-1);
 	}
 	$SYS_CODE = $enc2->mime_name || $enc2->name;
-	print "\tFile system code: $FS_CODE (cgi system is $SYS_CODE)\n";
+	print "    File system code: $FS_CODE (cgi system is $SYS_CODE)\n";
 }
 
 #-------------------------------------------------------------------------------
@@ -417,7 +423,7 @@ if ($FS_CODE) {
 	$PATH0 = $PATH;
 	$PATH0 =~ s|/$||;
 	$PATH0_len = length($PATH0);
-	print "\tWeb working path: $PATH\n";
+	print "    Web working path: $PATH\n";
 
 	## SCRIPT_NAME
 	my $scr = $0;
@@ -1009,12 +1015,11 @@ sub thread_id	{ return sprintf("%02d", threads->tid); }
 sub set_bit	{ vec($_[0], fileno($_[1]), 1) = 1; }
 sub reset_bit	{ vec($_[0], fileno($_[1]), 1) = 0; }
 sub check_bit   { vec($_[0], fileno($_[1]), 1); }
+
 sub rfc_date {
 	my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = gmtime(shift);
-
-	my($wd, $mn);
-	$wd = substr('SunMonTueWedThuFriSat',$wday*3,3);
-	$mn = substr('JanFebMarAprMayJunJulAugSepOctNovDec',$mon*3,3);
+	my $wd = substr('SunMonTueWedThuFriSat',$wday*3,3);
+	my $mn = substr('JanFebMarAprMayJunJulAugSepOctNovDec',$mon*3,3);
 
 	return sprintf("$wd, %02d $mn %04d %02d:%02d:%02d GMT"
 		, $mday, $year+1900, $hour, $min, $sec);
@@ -1025,7 +1030,7 @@ sub rfc_date {
 #-------------------------------------------------------------------------------
 sub search_dir_file {
 	my $file = shift || '.htaccess';
-	opendir(my $fh, './') || return [];
+	opendir(my $fh, './') || return;
 
 	my @ary;
 	foreach(readdir($fh)) {
