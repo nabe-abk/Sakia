@@ -55,9 +55,11 @@ my $DEAMONS   = 10;
 my $KEEPALIVE = 1;
 my $BUFSIZE_u = '1M';	# 1MB
 my $BUFSIZE;		# byte / set from $BUFSIZE_u
+my %MIME_TYPE;
 my $MIME_FILE;
 my @MIME_LIST = qw(/etc/mime.types mime.types lib/mime.types);
 my $INDEX     = 'index.html';
+my %DENY_DIRS;
 my $PID;
 my $R_BITS;	# select socket bits
 
@@ -75,30 +77,27 @@ if ($IsWindows) {
 }
 
 #-------------------------------------------------------------------------------
-# Web Server data
+# Default MIME data
 #-------------------------------------------------------------------------------
-my %DENY_DIRS;
-my %MIME_TYPE = ( 
-	html => 'text/html',
-	htm  => 'text/html',
-	text => 'text/plain',
-	txt  => 'text/plain',
-	md   => 'text/markdown',
-	css  => 'text/css',
-	js   => 'application/javascript',
-	json => 'application/json',
-	xml  => 'application/xml',
-	gif  => 'image/gif',
-	png  => 'image/png',
-	jpg  => 'image/jpeg',
-	jpeg => 'image/jpeg',
-	webp => 'image/webp',
-	ico  => 'image/vnd.microsoft.icon',
-	m4a  => 'audio/mp4',
-	mp4  => 'video/mp4',
-	webm => 'video/webm',
-	pdf  => 'application/pdf'
-);
+my $MIME_DATA = <<MIME;
+text/plain		text txt
+text/html		html htm
+text/markdown		md
+text/css		css
+application/javascript	js mjs es
+application/json	json
+application/xml		xml
+image/gif		gif
+image/png		png
+image/jpg		jpg jpeg
+image/webp		webp
+image/vnd.microsoft.icon ico
+audio/mp4		m4a
+video/mp4		mp4 mpg4 m4v
+video/mpeg		mpeg mpg mpe m1v m2v
+video/webm		webm
+application/pdf		pdf
+MIME
 
 #-------------------------------------------------------------------------------
 # for RFC date
@@ -352,32 +351,35 @@ if (1) {
 }
 
 #-------------------------------------------------------------------------------
-# load mime types
+# load MIME types
 #-------------------------------------------------------------------------------
-if (!$MIME_FILE) {
-	($MIME_FILE) = grep { -r $_ } @MIME_LIST;
-}
-if ($MIME_FILE) {
-	print "    Load mime types: $MIME_FILE ";
-	my $r = sysopen(my $fh, $MIME_FILE, O_RDONLY);
-	if (!$r) {
-		print "(error!)\n";
-	} else {
-
-		my $c=0;
-		while(<$fh>) {
-			chomp($_);
-			$_ =~ s/#.*//;
-			my ($type, @ary) = split(/\s+/, $_);
-			if ($type eq '' || !@ary) { next; }
-			foreach(@ary) {
-				$MIME_TYPE{$_} = $type;
-				$c++;
-			}
-		}
-		print "(load $c extensions)\n";
+if (1) {
+	if (!$MIME_FILE) {
+		($MIME_FILE) = grep { -r $_ } @MIME_LIST;
 	}
-	close($fh);
+	my $lines;
+	if ($MIME_FILE) {
+		print "    Load mime types: $MIME_FILE ";
+		$lines = &fread_lines($MIME_FILE);
+		if (!$lines) {
+			print "(read error!)\n";
+			undef $MIME_FILE;
+		}
+	}
+	$lines ||= [ split(/\n/, $MIME_DATA) ];
+
+	my $c=0;
+	foreach(@$lines) {
+		chomp($_);
+		$_ =~ s/#.*//;
+		my ($type, @ary) = split(/\s+/, $_);
+		if ($type eq '' || !@ary) { next; }
+		foreach(@ary) {
+			$MIME_TYPE{$_} = $type;
+			$c++;
+		}
+	}
+	$MIME_FILE && print "(load $c extensions)\n";
 }
 
 #-------------------------------------------------------------------------------
@@ -1023,6 +1025,17 @@ sub rfc_date {
 
 	return sprintf("$wd, %02d $mn %04d %02d:%02d:%02d GMT"
 		, $mday, $year+1900, $hour, $min, $sec);
+}
+
+#-------------------------------------------------------------------------------
+# read file
+#-------------------------------------------------------------------------------
+sub fread_lines {
+	my $file = shift;
+	sysopen(my $fh, $file, O_RDONLY) or return undef;
+	my @lines = <$fh>;
+	close($fh);
+	return \@lines;
 }
 
 #-------------------------------------------------------------------------------
