@@ -111,17 +111,34 @@ require Sakia::Base;
 my $ROBJ = new Sakia::Base;
 
 #--------------------------------------------------------------------------------
+# check reinit
+#--------------------------------------------------------------------------------
+if (!$FORCE && -e "$TARDIR/$NAME.conf.cgi") {
+	print "$NAME.conf.cgi is already exists.\n";
+	while(1) {
+		print "Continue? [y,n,u=update] ";
+		my $x = <STDIN> =~ tr/A-Z/a-z/r;
+		chomp($x);
+		if ($x eq 'y') { last; }
+		if ($x eq 'u') { &update(); exit; }
+		if ($x eq 'n') { exit; }
+	}
+}
+
+#--------------------------------------------------------------------------------
 # copy startup scripts
 #--------------------------------------------------------------------------------
-print "copy startup script:";
 foreach(qw(.cgi .fcgi .httpd.pl)) {
 	my $src = "$TPLDIR/startup$_";
-	my $des = "$TARDIR/$NAME$_";
-	print " $NAME$_";
-	system("cp -p '$src' '$des'");
+	my $des = "$NAME$_";
+	if (!$FORCE && -e "$TARDIR/$des") {
+		print "already exists  : $des\n";
+		next;
+	}
+	print "create file     : $des\n";
+	system("cp -p '$src' '$TARDIR/$des'");
 	chmod(0755, $des);
 }
-print "\n";
 &copy_file('startup.conf.cgi', "$NAME.conf.cgi");
 
 #--------------------------------------------------------------------------------
@@ -169,10 +186,11 @@ sub update {
 
 	foreach(qw(.cgi .fcgi .httpd.pl)) {
 		my $src = "$TPLDIR/startup$_";
+		my $_des= "$NAME$_";
 		my $des = "$TARDIR/$NAME$_";
 		if (!-e $des) { next; }
 
-		print " $des ";
+		print " $_des ";
 		my ($smod, $ssize) = &get_lastmodified($src);
 		my ($dmod, $dsize) = &get_lastmodified($des);
 		if ($smod == $dmod && $ssize == $dsize) {
