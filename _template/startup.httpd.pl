@@ -42,6 +42,7 @@ my $IsWindows    = ($^O eq 'MSWin32');
 my $SILENT_CGI   = 0;
 my $SILENT_FILE  = 0;
 my $SILENT_OTHER = 0;
+my $WARN_MSG     = 0;
 my $OPEN_BROWSER = $IsWindows;
 my $GENERATE_CONF= 1;
 
@@ -51,7 +52,7 @@ my $PORT      = $IsWindows ? 80 : 8888;
 my $ITHREADS  =  1;
 my $TIMEOUT   =  5;
 my $TIMEOUT_BIN;
-my $DEAMONS   = 10;
+my $DAEMONS   = 10;
 my $KEEPALIVE = 1;
 my $BUFSIZE_u = '1M';	# 1MB
 my $BUFSIZE;		# byte / set from $BUFSIZE_u
@@ -147,6 +148,7 @@ my %SIZE_UNIT = ('K' => 1024, 'M' => 1024*1024, 'G' => 1024*1024*1024);
 			if ($k2 eq 'sc') { $key=$ky; $SILENT_CGI  = $SILENT_OTHER = 1; next; }
 			if ($k2 eq 'sf') { $key=$ky; $SILENT_FILE = $SILENT_OTHER = 1; next; }
 			if ($k  eq 's')  { $key=$kx; $SILENT_CGI  = $SILENT_FILE = $SILENT_OTHER = 1; next; }
+			if ($k  eq 'w')  { $key=$kx; $WARN_MSG    = 1; next; }
 
 			# system code
 			if ($k2 eq 'cs') { $key=$ky; $SYS_CODE = shift(@ary); next; }
@@ -195,7 +197,7 @@ my %SIZE_UNIT = ('K' => 1024, 'M' => 1024*1024, 'G' => 1024*1024*1024);
 				exit(-1);
 			}
 			if ($k eq 'p') { $PORT    = $val; next; }
-			if ($k eq 'd') { $DEAMONS = $val; next; }
+			if ($k eq 'd') { $DAEMONS = $val; next; }
 			if ($k eq 'm') { $MAX_CGI_REQUESTS = $val; next; }
 
 			#---------------------------------------------
@@ -206,7 +208,7 @@ my %SIZE_UNIT = ('K' => 1024, 'M' => 1024*1024, 'G' => 1024*1024*1024);
 		}
 	}
 	if ($TIMEOUT < 0.001)	{ $TIMEOUT=0.001; }
-	if ($DEAMONS < 1) 	{ $DEAMONS=1;     }
+	if ($DAEMONS < 1) 	{ $DAEMONS=1;     }
 	if ($MAX_CGI_REQUESTS == 0)		{ $MAX_CGI_REQUESTS=10000000; }
 	if ($MAX_CGI_REQUESTS > 10000000)	{ $MAX_CGI_REQUESTS=10000000; }
 	if ($MAX_CGI_REQUESTS <      100)	{ $MAX_CGI_REQUESTS=100; }
@@ -240,6 +242,7 @@ Available options are:
   -s		silent mode
   -sc		silent mode for cgi  access
   -sf		silent mode for file access
+  -w		enable warn message
   -n		do not open web browser (Windows only)
   -?|-h		view this help
 HELP
@@ -337,7 +340,7 @@ print(
 		. " Timeout $TIMEOUT sec,"
 		. " Buffer ${BUFSIZE_u}B,"
 		. " Keep-Alive " . ($KEEPALIVE ? 'on' : 'off') . "\n"
-	. "    Start up: $DEAMONS " . ($ITHREADS ? 'threads' : 'process')
+	. "    Start up: $DAEMONS " . ($ITHREADS ? 'threads' : 'process')
 	. ", Max cgi requests: $MAX_CGI_REQUESTS\n"
 );
 
@@ -469,7 +472,7 @@ if ($GENERATE_CONF) {
 	$SIG{ALRM} = 'IGNORE';	#
 
 	# prefork / create_threads
-	for(my $i=0; $i<$DEAMONS; $i++) {
+	for(my $i=0; $i<$DAEMONS; $i++) {
 		&fork_or_crate_thread(\&daemon_main, $srv);
 	}
 
@@ -493,7 +496,7 @@ if ($GENERATE_CONF) {
 	# main thread
 	while(1) {
 		sleep(3);
-		$exit_daemons = $ITHREADS ? ($DEAMONS - scalar(threads->list())) : $exit_daemons;
+		$exit_daemons = $ITHREADS ? ($DAEMONS - scalar(threads->list())) : $exit_daemons;
 		if ($exit_daemons<1) { next; }
 
 		# Restart dead daemons
@@ -513,6 +516,7 @@ sub daemon_main {
 	my $srv = shift;
 	my %bak = %ENV;
 	my $cgi = 0;
+	if (!$WARN_MSG) { close(STDERR); }
 
 	if (!$ITHREADS) {	# for fock() in CGI
 		$SIG{CHLD} = 'IGNORE';
@@ -527,10 +531,9 @@ sub daemon_main {
 		my $addr = accept(my $sock, $srv);
 		if (!$addr) { next; }
 
-		my $st = &accept_client($sock, $addr, \%bak);	# $r==-1 if cgi_reload
-
+		my $st = &accept_client($sock, $addr, \%bak);
 		if ($st->{shutdown}) {
-			print "$$ shutdown\n";
+			print "[$PID] shutdown\n";
 			last;
 		}
 		if ($MAX_CGI_REQUESTS<$CGI_REQUESTS) { last; }
@@ -774,9 +777,9 @@ sub try_file_read {
 
 	$file =~ s|/+|/|g;
 	$file =~ s|\?.*||;
-	if ($file =~ m|/\.\./|)   { return; }	# ignore parent dir
-	if ($file =~ m|^/\..*/|)  { return; }	# ignore .*/ dirs
-	if ($file =~ m|^/[^/]*$|) { return; }	# ignore current dir files
+	if ($file =~ m|/\.\./|)  { return; }	# ignore parent dir
+	if ($file =~ m|^/\..*/|) { return; }	# ignore .*/ dirs
+	if ($file =~ m|^/[^/]*$| && $file ne '/favicon.ico') { return; }	# ignore current dir files
 
 	if ($INDEX && $file ne '/' && substr($file, -1) eq '/') {
 		$file .= $INDEX;
