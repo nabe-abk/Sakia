@@ -1,13 +1,13 @@
 #!/usr/bin/perl
 use v5.14;
 use strict;
-our $VERSION  = '2.00';
+our $VERSION  = '2.01';
 our $SPEC_VER = '2.00';	# specification version for compatibility
 ################################################################################
 # Sakia system - HTTP Server
 #					Copyright (C)2019-2026 nabe@abk
 ################################################################################
-# Last Update : 2026-02-21
+# Last Update : 2026-02-23
 #
 BEGIN {
 	my $path = $0;
@@ -60,7 +60,8 @@ my %MIME_TYPE;
 my $MIME_FILE;
 my @MIME_LIST = qw(/etc/mime.types mime.types lib/mime.types);
 my $INDEX     = 'index.html';
-my %DENY_DIRS;
+my %DENY_DIR;
+my %STATIC_DIR;
 my $PID;
 my $R_BITS;	# select socket bits
 
@@ -389,11 +390,27 @@ if (1) {
 # search deny directories
 #-------------------------------------------------------------------------------
 {
-	my @dirs = &search_dir_file('.htaccess');
-
-	print "    Deny dirs: " . join('/, ', @dirs) . "/ and .*/\n";
+	my @dirs = &search_file_in_dir('./', '.htaccess');
+	my @deny;
+	my @static;
 	foreach(@dirs) {
-		$DENY_DIRS{$_}=1;
+		my $data = join('', @{ &fread_lines($_ . '.htaccess') });
+		if ($data =~ /(?:^|\n)\s*Require\s+All\s+Denied\b/i
+		 || $data =~ /(?:^|\n)\s*deny\s+from\s+all\b/i) {
+			push(@deny, $_);
+		}
+		if ($data =~ /(?:^|\n)\s*RewriteEngine\s+Off\b/i) {
+			push(@static, $_);
+		}
+	}
+
+	if (@deny) {
+		print "    Deny dirs: " . join(', ', @deny) . " and .*/\n";
+		%DENY_DIR = map { $_ => 1 } @deny;
+	}
+	if (@static) {
+		print "    Static dirs: " . join(', ', @static) . "\n";
+		%STATIC_DIR = map { $_ => 1 } @static;
 	}
 }
 
@@ -779,22 +796,38 @@ sub try_file_read {
 	$file =~ s|\?.*||;
 	if ($file =~ m|/\.\./|)  { return; }	# ignore parent dir
 	if ($file =~ m|^/\..*/|) { return; }	# ignore .*/ dirs
-	if ($file =~ m|^/[^/]*$| && $file ne '/favicon.ico') { return; }	# ignore current dir files
 
 	if ($INDEX && $file ne '/' && substr($file, -1) eq '/') {
 		$file .= $INDEX;
+	}
+	my $not_favicon = $file ne '/favicon.ico';
+
+	#---------------------------------------------------
+	# deny and static check
+	#---------------------------------------------------
+	my $_file = substr($file,1);		# /index.html to index.html
+	my $static;
+	if ($not_favicon) {
+		my @ary = split(/\//, $_file);
+		pop(@ary);
+		if (!@ary) { return; }	# ignore current dir files
+
+		my $dir='';
+		while(@ary) {
+			$dir .= shift(@ary) . '/';
+			if ($DENY_DIR  {$dir}) { return &_403_forbidden($state); }
+			if ($STATIC_DIR{$dir}) { $static=1; }
+		}
 	}
 
 	#---------------------------------------------------
 	# file system encode
 	#---------------------------------------------------
-	my $_file = substr($file,1);	# /index.html to index.html
-
 	if ($FS_CODE && $FS_CODE ne $SYS_CODE) {
 		Encode::from_to($_file, $SYS_CODE, $FS_CODE);
 	}
 	if (!-e $_file) {
-		if ($file ne '/favicon.ico') { return; }
+		if (!$static && $not_favicon) { return; }
 		$state->{type} = 'file';
 		return &_404_not_found($state);
 	}
@@ -803,9 +836,7 @@ sub try_file_read {
 	# file request
 	#---------------------------------------------------
 	$state->{type} = 'file';
-	if (!-r $_file
-	 || $file =~ m|/\.ht|
-	 || $file =~ m|^/([^/]+)/| && $DENY_DIRS{$1}) {
+	if (!-r $_file || $file =~ m|/\.ht|) {
 		return &_403_forbidden($state);
 	}
 
@@ -1042,18 +1073,26 @@ sub fread_lines {
 }
 
 #-------------------------------------------------------------------------------
-# deny directories
+# search file in dir
 #-------------------------------------------------------------------------------
-sub search_dir_file {
-	my $file = shift || '.htaccess';
-	opendir(my $fh, './') || return;
+sub search_file_in_dir {
+	my $dir  = shift || './';
+	my $file = shift;
+	my $cnt  = shift || 0;
+	opendir(my $fh, $dir) || return;
+	$dir =~ s|/*$|/|;
+	$dir = ($dir eq './') ? '' : $dir;
 
 	my @ary;
 	foreach(readdir($fh)) {
 		if ($_ eq '.' || $_ eq '..' )  { next; }
-		if (!-d $_) { next; }
-		if (-e "$_/$file") {
-			push(@ary, $_);
+		my $d = "$dir$_";
+		if (!-d $d) { next; }
+		if (-e "$d/$file") {
+			push(@ary, "$dir$_/");
+		}
+		if ($cnt<99) {
+			push(@ary, &search_file_in_dir($d, $file, $cnt+1));
 		}
 	}
 	closedir($fh);
