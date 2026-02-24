@@ -5,7 +5,7 @@ use strict;
 #-------------------------------------------------------------------------------
 package Sakia::Base;
 #-------------------------------------------------------------------------------
-our $VERSION = '3.02';
+our $VERSION = '3.03';
 our $RELOAD;
 my %StatCache;
 my $StatCacheTM;
@@ -215,7 +215,7 @@ sub finish {
 		$obj->FINISH();
 	}
 
-	if ($self->{Develop} && @{$self->{Error}}) {
+	if ($self->{Develop} && @{$self->{Error}} && !$self->{HTTPD}) {
 		$self->output_error();
 	}
 
@@ -1032,13 +1032,11 @@ sub make_call_from {
 sub output_error {
 	my $self = shift;
 	my $ctype= shift;
-	if ($ENV{SERVER_PROTOCOL} && $ctype) {
-		$self->output_http_headers($ctype, @_);
-	}
-	if ($ENV{SERVER_PROTOCOL} && $self->{ContentType} eq 'text/html') {
-		print "<hr><strong>(ERROR)</strong><br>\n",$self->clear_error();
+	my $msg;
+	if ($ctype eq 'text/html') {
+		$self->output("<hr><strong>(ERROR)</strong><br>\n" . $self->clear_error(), $ctype);
 	} else {
-		print "\n(ERROR) ",$self->clear_error("\n"),"\n";
+		print "\n(ERROR) " . $self->clear_error("\n") . "\n";
 	}
 }
 
