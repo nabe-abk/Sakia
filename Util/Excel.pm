@@ -1,12 +1,12 @@
 use strict;
 #-------------------------------------------------------------------------------
 # Excel file manipulation
-#							(C)2020-2025 nabe@abk
+#							(C)2020-2026 nabe@abk
 #-------------------------------------------------------------------------------
 # Use commands: rm zip unzip and shell
 #
 package Sakia::Util::Excel;
-our $VERSION = '1.28';
+our $VERSION = '1.29';
 #-------------------------------------------------------------------------------
 use Fcntl;
 ## mskip-all: for message checker
@@ -518,9 +518,11 @@ sub replace_cells($$) {
 
 	my %c;
 	my $do_replace = sub {
+		my $is_func = $_[1];
 		my $replace;
 		$_[0] =~ s{(\"?)\$(\w+)(?::(\d+)(?::(\d+))?)?(?:([\?\!,])((?:[^\$]|\$\w+\$)+))?\$\1}{
 			$replace = 1;
+			my $q = $1;
 			my $v = $h->{$2};
 			if (ref($v)) {
 				# line load once
@@ -558,7 +560,7 @@ sub replace_cells($$) {
 			elsif ($symbol eq '!') { $v = $v eq '' ? $default : ''; }
 			elsif ($symbol eq ',') { $v = $v ne '' ? $v       : $default; }
 
-			$v;
+			$is_func && !$self->is_numeric($v) ? "$q$v$q": $v;
 		}seg;
 		return $replace;
 	};
@@ -589,7 +591,7 @@ sub replace_cells($$) {
 			my $after  = $4;
 			my $replace_only = ($f =~ m|^(?:"\$\w+(?::\d+(?::\d+)?)?(?:[\?\!,][^\$]+)?\$")+$|);
 
-			my $replace = &$do_replace($f);
+			my $replace = &$do_replace($f, 'is_func');
 
 			if (!$replace) {
 				"<c$at>$cell</c>";
@@ -599,10 +601,8 @@ sub replace_cells($$) {
 
 			} else {
 				# rewrite attribute
-				if ($f =~ /^-?\d+(?:\.\d+)?$/) {
+				if ($self->is_numeric($f)) {
 					$at =~ s/ t="str"//;
-				} else {
-					$f  = "\"$f\"";		# string
 				}
 
 				if ($f eq '' && $at =~ /r="([A-Z]+\d+)"/) {
@@ -618,6 +618,11 @@ sub replace_cells($$) {
 	}seg;
 	#-----------------------------------------------------------------------
 	return $sheet;
+}
+
+sub is_numeric {
+	my $self = shift;
+	return shift =~ /^-?\d+(?:\.\d+)?$/;
 }
 
 #-------------------------------------------------------------------------------
