@@ -5,7 +5,7 @@ use strict;
 # Sakia system - startup routine (for FastCGI)
 #					Copyright (C)2005-2026 nabe@abk
 #-------------------------------------------------------------------------------
-# Last Update : 2026-02-21
+# Last Update : 2026-11-07
 #
 BEGIN {
 	unshift(@INC, './lib');
@@ -55,9 +55,9 @@ if (!$Socket) {
 	while(1) {
 		sleep(3);
 		my $exit_threads = $Threads - $#{[ threads->list() ]} - 1;
-		if (!$exit_threads) { next; }
+		if ($exit_threads<1) { next; }
 
-		&create_threads( $Threads, $Socket );
+		&create_threads( $exit_threads, $Socket );
 	}
 }
 exit(0);
