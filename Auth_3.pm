@@ -89,9 +89,9 @@ sub delete_user {
 }
 
 ################################################################################
-# Self edit user data
+# change self user data
 ################################################################################
-sub change_info {
+sub change_self_info {
 	my ($self, $form, $ext) = @_;
 	my $ROBJ = $self->{ROBJ};
 
