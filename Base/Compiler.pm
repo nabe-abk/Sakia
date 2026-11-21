@@ -4,7 +4,7 @@ use strict;
 #						(C)2006-2025 nabe@abk
 #-------------------------------------------------------------------------------
 package Sakia::Base::Compiler;
-our $VERSION = '3.21';
+our $VERSION = '3.22';
 use Sakia::AutoLoader;
 ################################################################################
 # constructor
@@ -279,6 +279,7 @@ my %OPR_formal;		# to formal name
 use constant OPL_right_to_left	=> 0x01;
 use constant OPL_unary		=> 0x02;
 use constant OPL_unary_right	=> 0x04;
+use constant OPL_function	=> 0x08;
 use constant OPL_max		=> 0x1000;
 
 $OPR{'('}  =  0x00;
@@ -321,10 +322,10 @@ $OPR{'>'}  =  0xb0;
 $OPR{'<='} =  0xb0;
 $OPR{'>='} =  0xb0;
 $OPR{'defined'}=0xc2;
-$OPR{'-e'} =  0xc2; $OPR_formal{'-e'} = '-e ';
-$OPR{'-r'} =  0xc2; $OPR_formal{'-r'} = '-r ';
-$OPR{'-w'} =  0xc2; $OPR_formal{'-w'} = '-w ';
-$OPR{'-s'} =  0xc2; $OPR_formal{'-s'} = '-s ';
+$OPR{'-e'} =  0xca; $OPR_formal{'-e'} = '-e ';
+$OPR{'-r'} =  0xca; $OPR_formal{'-r'} = '-r ';
+$OPR{'-w'} =  0xca; $OPR_formal{'-w'} = '-w ';
+$OPR{'-s'} =  0xca; $OPR_formal{'-s'} = '-s ';
 $OPR{'>>'} =  0xd0;
 $OPR{'<<'} =  0xd0;
 $OPR{'+'}  =  0xe0;
@@ -1387,7 +1388,7 @@ sub p2e_operator {
 	if ($opl & OPL_unary) {
 		my $a  = ($opl & OPL_unary_right) ? "$x$op" : "$op$x";
 		my $at = '';
-		if ($xt eq 'const') {
+		if (!($opl & OPL_function) && $xt eq 'const') {
 			$a  = eval($a);
 			$a = $self->single_quot_if_need($a);
 			if ($a eq '') { $a="''"; }
@@ -1407,7 +1408,7 @@ sub p2e_operator {
 
 	my $a  = "$y$op$x";
 	my $at = '';
-	if ($xt eq 'const' && $yt eq 'const') {
+	if (!($opl & OPL_function) && $xt eq 'const' && $yt eq 'const') {
 		$a  = eval($a);
 		$a = $self->single_quot_if_need($a);
 		if ($a eq '') { $a="''"; }
